@@ -1,0 +1,3 @@
+## Copy this to local.properties and set your Android SDK path
+## (same SDK you already use for the Flutter app's android/ folder)
+sdk.dir=/data/data/com.termux/files/home/android-sdk

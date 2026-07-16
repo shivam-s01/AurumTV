@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="Theme.AurumTv" parent="Theme.Leanback">
+        <item name="android:windowBackground">@color/aurum_bg</item>
+        <item name="browseTitleTextStyle">@style/AurumTv.TitleText</item>
+    </style>
+
+    <style name="AurumTv.TitleText" parent="TextAppearance.Leanback.Title">
+        <item name="android:textColor">@color/aurum_gold_light</item>
+    </style>
+
+    <style name="Theme.AurumTv.Player" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@color/aurum_bg</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+
+</resources>

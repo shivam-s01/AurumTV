@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Placeholder banner. Android TV requires exactly 320x180dp for the
+     launcher banner. Replace with your real Aurum logo banner — keep it
+     as a 9-patch PNG or vector if possible, avoid a big flat PNG here
+     since this asset ships in every density bucket if not careful. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/vector"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <path android:fillColor="#050508" android:pathData="M0,0h320v180h-320z" />
+    <path android:fillColor="#9B7EDE" android:pathData="M40,90 L80,60 L80,120 Z" />
+</vector>

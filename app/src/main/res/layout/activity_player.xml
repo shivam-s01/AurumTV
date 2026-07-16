@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/aurum_bg"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:padding="48dp">
+
+    <ImageView
+        android:id="@+id/player_art"
+        android:layout_width="360dp"
+        android:layout_height="360dp"
+        android:scaleType="centerCrop"
+        android:background="@color/aurum_card" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="40dp"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/player_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/aurum_text_primary"
+            android:textSize="32sp"
+            android:textStyle="bold"
+            android:maxLines="2"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/player_artist"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textColor="@color/aurum_text_secondary"
+            android:textSize="20sp" />
+
+    </LinearLayout>
+</LinearLayout>

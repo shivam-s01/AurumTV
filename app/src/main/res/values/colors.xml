@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Same brand palette as the phone app's aurum_theme.dart, dark mode
+         only — TV screens are always viewed in a dark room, no need to
+         ship a light theme + toggle logic for this build. -->
+    <color name="aurum_gold">#9B7EDE</color>
+    <color name="aurum_gold_light">#B69FEE</color>
+    <color name="aurum_gold_dark">#7A5FC4</color>
+
+    <color name="aurum_bg">#050508</color>
+    <color name="aurum_card">#12121C</color>
+    <color name="aurum_surface">#1A1A28</color>
+
+    <color name="aurum_text_primary">#F0EBD8</color>
+    <color name="aurum_text_secondary">#8A8A9A</color>
+</resources>
