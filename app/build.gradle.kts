@@ -70,6 +70,11 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // Supabase-kt (and some of its Ktor/kotlinx dependencies) expect
+        // java.time and other APIs that only exist natively on API 26+.
+        // Desugaring backports them so minSdk can stay at 23 and still
+        // cover older Android TV / Fire TV boxes.
+        isCoreLibraryDesugaringEnabled = true
     }
     kotlinOptions {
         jvmTarget = "17"
@@ -102,6 +107,8 @@ android {
 }
 
 dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+
     // ── Compose for TV ───────────────────────────────────────────────────
     // Replaces Leanback. androidx.tv:tv-material gives Spotify-style
     // focus/scale animations, Card variants, and D-pad focus handling
@@ -147,7 +154,7 @@ dependencies {
     // for what's really an occasional cross-device sync check; TV polls
     // instead (see SyncRepository). Uses Ktor/OkHttp under the hood, which
     // we already depend on, so marginal size cost of what's left is small.
-    implementation(platform("io.github.jan-tennert.supabase:bom:2.6.1"))
+    implementation(platform("io.github.jan-tennert.supabase:bom:3.0.3"))
     implementation("io.github.jan-tennert.supabase:auth-kt")
     implementation("io.github.jan-tennert.supabase:postgrest-kt")
     implementation("io.ktor:ktor-client-okhttp:2.3.12")
