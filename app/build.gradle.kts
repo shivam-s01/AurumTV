@@ -3,6 +3,18 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Reads android/key.properties the same way the phone app does — written
+// at build time by CI (see .github/workflows/build.yml) by decoding the
+// KEYSTORE_BASE64 secret. Locally, copy key.properties.example to
+// key.properties and fill in your own keystore details if you want to
+// build a signed APK from Termux directly.
+val keystorePropertiesFile = rootProject.file("key.properties")
+val keystoreProperties = java.util.Properties()
+val hasKeystoreProperties = keystorePropertiesFile.exists()
+if (hasKeystoreProperties) {
+    keystoreProperties.load(java.io.FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace = "com.aurum.musictv"
     compileSdk = 34
@@ -15,6 +27,17 @@ android {
         versionName = "1.0.0"
     }
 
+    signingConfigs {
+        if (hasKeystoreProperties) {
+            create("release") {
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -23,6 +46,15 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Falls back to the default debug signing if key.properties
+            // isn't present (e.g. a local build without secrets) so the
+            // build never hard-fails — it just produces an APK you can't
+            // publish, which matches how most Android CI setups degrade.
+            signingConfig = if (hasKeystoreProperties) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 

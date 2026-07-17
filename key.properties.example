@@ -1,0 +1,7 @@
+## Copy this to key.properties (repo root, same level as settings.gradle.kts)
+## for local signed builds. In CI, this file is generated automatically
+## from GitHub Secrets — see .github/workflows/build.yml.
+storePassword=yourStorePassword
+keyPassword=yourKeyPassword
+keyAlias=yourKeyAlias
+storeFile=aurum-release.jks
