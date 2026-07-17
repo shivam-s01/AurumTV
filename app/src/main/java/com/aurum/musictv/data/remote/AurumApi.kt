@@ -1,7 +1,5 @@
-package com.aurum.musictv.data.remote
+package com.aurum.musictv.data
 
-import com.aurum.musictv.data.model.Song
-import com.aurum.musictv.data.model.SongSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
