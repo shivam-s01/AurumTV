@@ -5,6 +5,8 @@ import coil.Coil
 import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import java.io.PrintWriter
+import java.io.StringWriter
 
 /**
  * Configures Coil's global ImageLoader with hard caps tuned for 1GB-RAM
@@ -18,6 +20,31 @@ class AurumTvApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // TEMPORARY DIAGNOSTIC: without adb access on-device, the default
+        // "app keeps stopping" dialog gives no detail. This routes any
+        // uncaught crash to CrashDisplayActivity instead, showing the full
+        // stack trace on-screen so it can be screenshotted directly.
+        // Remove once the app is stable — this should never ship long-term
+        // since exposing raw stack traces isn't something a release build
+        // should do by default.
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                val sw = StringWriter()
+                throwable.printStackTrace(PrintWriter(sw))
+                val intent = android.content.Intent(this, CrashDisplayActivity::class.java).apply {
+                    putExtra("stack_trace", sw.toString())
+                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                        android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK
+                }
+                startActivity(intent)
+                android.os.Process.killProcess(android.os.Process.myPid())
+                kotlin.system.exitProcess(1)
+            } catch (e: Exception) {
+                defaultHandler?.uncaughtException(thread, throwable)
+            }
+        }
 
         val imageLoader = ImageLoader.Builder(this)
             .memoryCache {
