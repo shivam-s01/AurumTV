@@ -58,7 +58,16 @@ class HomeBrowseFragment : BrowseSupportFragment() {
 
     private fun loadRows() {
         lifecycleScope.launch {
-            val sections = AurumApi.homeSections()
+            val sections = try {
+                AurumApi.homeSections()
+            } catch (e: Exception) {
+                showMessage("Failed to load: ${e.message}")
+                emptyList()
+            }
+            if (sections.isEmpty()) {
+                showMessage("No songs loaded — check network connection")
+                return@launch
+            }
             sections.forEach { (title, songs) ->
                 val listRowAdapter = ArrayObjectAdapter(SongCardPresenter())
                 songs.forEach { listRowAdapter.add(it) }
@@ -66,5 +75,14 @@ class HomeBrowseFragment : BrowseSupportFragment() {
                 rowsAdapter.add(ListRow(header, listRowAdapter))
             }
         }
+    }
+
+    /** Visible on-device feedback for load failures — without this, an
+     *  empty home screen gives no signal about whether the network call
+     *  failed, returned zero results, or something threw silently. A
+     *  Toast is enough for TV since there's no logcat access on most
+     *  boxes during normal use. */
+    private fun showMessage(message: String) {
+        android.widget.Toast.makeText(requireContext(), message, android.widget.Toast.LENGTH_LONG).show()
     }
 }

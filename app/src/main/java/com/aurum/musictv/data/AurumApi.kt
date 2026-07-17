@@ -127,10 +127,13 @@ object AurumApi {
             val o = arr.optJSONObject(i) ?: continue
             val id = o.optString("id")
             if (id.isBlank()) continue
-            val title = o.optString("name", o.optString("title", "Unknown"))
-            val artist = o.optString("artistName")
-                .ifBlank { o.optString("primary_artists") }
-                .ifBlank { o.optString("artist", "Unknown") }
+            // JioSaavn/Worker response uses "song" as the title field, not
+            // "title" or "name" — matches api_service.dart's _songFromSaavn
+            // exactly (title = j['song'] ?? j['name'] ?? j['title']).
+            val title = o.optString("song")
+                .ifBlank { o.optString("name") }
+                .ifBlank { o.optString("title", "Unknown") }
+            val artist = extractArtist(o)
             val artUrl = extractArtwork(o)
             val duration = o.optInt("duration", 0)
             out.add(
@@ -145,6 +148,28 @@ object AurumApi {
             )
         }
         return out
+    }
+
+    /** Artist is a nested object — {"artists": {"primary": [{"name": "..."}]}}
+     *  — not a flat string field. Falls back to primary_artists/singers/
+     *  artist string fields for older/alternate response shapes, same as
+     *  api_service.dart's _songFromSaavn. */
+    private fun extractArtist(o: JSONObject): String {
+        val artistsField = o.optJSONObject("artists")
+        val primary = artistsField?.optJSONArray("primary")
+        if (primary != null && primary.length() > 0) {
+            val names = mutableListOf<String>()
+            for (i in 0 until primary.length()) {
+                val a = primary.optJSONObject(i)
+                val name = a?.optString("name")?.takeIf { it.isNotBlank() }
+                if (name != null) names.add(name)
+            }
+            if (names.isNotEmpty()) return names.joinToString(", ")
+        }
+        return o.optString("primary_artists")
+            .ifBlank { o.optString("singers") }
+            .ifBlank { o.optString("artist") }
+            .ifBlank { "Unknown Artist" }
     }
 
     private fun extractArtwork(o: JSONObject): String? {
