@@ -46,12 +46,37 @@ object AurumApi {
 
     suspend fun search(query: String, limit: Int = 25): List<Song> {
         val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val json = getJson("$WORKER/api/search/songs?query=$encoded&limit=$limit")
-            ?: return emptyList()
-        val results = json.optJSONObject("data")?.optJSONArray("results")
-            ?: json.optJSONArray("results")
-            ?: JSONArray()
+        val results = getJsonArrayOrObjectData(
+            "$WORKER/api/search/songs?query=$encoded&limit=$limit"
+        )
         return parseSongs(results)
+    }
+
+    /** Worker responses come back in one of two shapes depending on
+     *  endpoint/route: {"data": [...]} or a bare [...] array. The phone
+     *  app's api_service.dart handles both the same way (see its
+     *  `data is Map ? data['data'] as List : data is List ? data : null`
+     *  pattern) — this mirrors that exactly rather than assuming a nested
+     *  {"data": {"results": [...]}} shape, which the Worker doesn't use. */
+    private suspend fun getJsonArrayOrObjectData(url: String): JSONArray {
+        return withContext(Dispatchers.IO) {
+            try {
+                val req = Request.Builder().url(url).build()
+                client.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@withContext JSONArray()
+                    val body = resp.body?.string() ?: return@withContext JSONArray()
+                    val trimmed = body.trimStart()
+                    if (trimmed.startsWith("[")) {
+                        JSONArray(body)
+                    } else {
+                        val obj = JSONObject(body)
+                        obj.optJSONArray("data") ?: JSONArray()
+                    }
+                }
+            } catch (e: Exception) {
+                JSONArray()
+            }
+        }
     }
 
     suspend fun homeSections(): List<Pair<String, List<Song>>> {
