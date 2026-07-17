@@ -7,7 +7,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
-    <!-- Declares this app targets TV — required for Google TV app store
+    <!-- Declares this app targets TV -- required for Google TV app store
          listing, and tells the OS not to expect a touchscreen. -->
     <uses-feature
         android:name="android.software.leanback"
@@ -26,8 +26,11 @@
         android:hardwareAccelerated="true"
         android:largeHeap="false">
 
+        <!-- Single Activity, Compose-driven navigation between
+             Auth/Home/Search/Player (see MainActivity.kt) -- replaces the
+             old 3-Activity Leanback setup. -->
         <activity
-            android:name=".ui.home.HomeActivity"
+            android:name=".MainActivity"
             android:exported="true"
             android:screenOrientation="landscape"
             android:theme="@style/Theme.AurumTv">
@@ -37,18 +40,6 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <activity
-            android:name=".ui.player.PlayerActivity"
-            android:exported="false"
-            android:screenOrientation="landscape"
-            android:theme="@style/Theme.AurumTv.Player" />
-
-        <activity
-            android:name=".ui.search.SearchActivity"
-            android:exported="false"
-            android:screenOrientation="landscape"
-            android:theme="@style/Theme.AurumTv" />
 
         <service
             android:name=".player.AurumTvPlaybackService"

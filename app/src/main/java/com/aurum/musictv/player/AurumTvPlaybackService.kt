@@ -7,7 +7,7 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
-import com.aurum.musictv.ui.player.PlayerActivity
+import com.aurum.musictv.MainActivity
 
 /**
  * TV equivalent of AurumMediaSessionService.kt from the phone app. Same
@@ -49,7 +49,7 @@ class AurumTvPlaybackService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(true)
             .build()
 
-        val sessionActivityIntent = Intent(this, PlayerActivity::class.java)
+        val sessionActivityIntent = Intent(this, MainActivity::class.java)
         val sessionActivityPendingIntent = PendingIntent.getActivity(
             this, 0, sessionActivityIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
