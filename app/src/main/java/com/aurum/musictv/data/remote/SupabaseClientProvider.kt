@@ -2,7 +2,9 @@ package com.aurum.musictv.data.remote
 
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.auth.Auth
+import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.Postgrest
+import io.github.jan.supabase.postgrest.postgrest
 
 /**
  * Same Supabase project the mobile app talks to (see mobile
