@@ -22,7 +22,7 @@ if (hasKeystoreProperties) {
 
 android {
     namespace = "com.aurum.musictv"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.aurum.musictv"
