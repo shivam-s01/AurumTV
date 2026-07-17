@@ -19,9 +19,16 @@ object AurumApi {
     // Same Worker URL as the phone app (lib/services/api_service.dart:209).
     private const val WORKER = "https://aurum-worker.shivamsharma962122.workers.dev"
 
+    // Tuned for TV-box WiFi, which is often the weakest link in the chain
+    // on budget hardware — a small bounded connection pool avoids holding
+    // idle sockets that cost memory for no benefit on a single-screen app,
+    // and retryOnConnectionFailure smooths over the brief drops that cheap
+    // WiFi chipsets are prone to.
     private val client = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(8, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .connectionPool(okhttp3.ConnectionPool(2, 30, TimeUnit.SECONDS))
         .build()
 
     private suspend fun getJson(url: String): JSONObject? = withContext(Dispatchers.IO) {

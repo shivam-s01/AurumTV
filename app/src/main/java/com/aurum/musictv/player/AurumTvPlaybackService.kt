@@ -39,6 +39,14 @@ class AurumTvPlaybackService : MediaSessionService() {
 
         val player = ExoPlayer.Builder(this)
             .setLoadControl(loadControl)
+            // TV boxes often sit connected via ethernet or WiFi with the
+            // screen technically always "on" (no lockscreen the way a
+            // phone has), but this still matters for CPU wake locks during
+            // network buffering — same reasoning as the phone app's
+            // AurumAudioEngine wake-lock handling, just simpler since TV
+            // has no doze-mode battery restrictions to fight.
+            .setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK)
+            .setHandleAudioBecomingNoisy(true)
             .build()
 
         val sessionActivityIntent = Intent(this, PlayerActivity::class.java)
