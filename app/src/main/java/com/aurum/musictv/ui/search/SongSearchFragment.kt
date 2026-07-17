@@ -32,7 +32,7 @@ class SongSearchFragment : SearchSupportFragment(), SearchSupportFragment.Search
         super.onCreate(savedInstanceState)
         setSearchResultProvider(this)
 
-        onItemViewClickedListener = OnItemViewClickedListener { _, item, _, _ ->
+        setOnItemViewClickedListener(OnItemViewClickedListener { _, item, _, _ ->
             if (item is Song) {
                 val intent = Intent(requireContext(), PlayerActivity::class.java)
                 intent.putExtra(PlayerActivity.EXTRA_SONG_ID, item.id)
@@ -42,7 +42,7 @@ class SongSearchFragment : SearchSupportFragment(), SearchSupportFragment.Search
                 intent.putExtra(PlayerActivity.EXTRA_SONG_SOURCE, item.source.name)
                 startActivity(intent)
             }
-        }
+        })
     }
 
     override fun getResultsAdapter(): ObjectAdapter = rowsAdapter

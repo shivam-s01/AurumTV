@@ -93,7 +93,8 @@ object AurumApi {
         val out = mutableListOf<Song>()
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
-            val id = o.optString("id").ifBlank { continue }
+            val id = o.optString("id")
+            if (id.isBlank()) continue
             val title = o.optString("name", o.optString("title", "Unknown"))
             val artist = o.optString("artistName")
                 .ifBlank { o.optString("primary_artists") }
