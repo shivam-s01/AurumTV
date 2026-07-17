@@ -7,7 +7,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
-    <!-- Declares this app targets TV -- required for Google TV app store
+    <!-- Declares this app targets TV — required for Google TV app store
          listing, and tells the OS not to expect a touchscreen. -->
     <uses-feature
         android:name="android.software.leanback"
@@ -27,7 +27,7 @@
         android:largeHeap="false">
 
         <!-- Single Activity, Compose-driven navigation between
-             Auth/Home/Search/Player (see MainActivity.kt) -- replaces the
+             Auth/Home/Search/Player (see MainActivity.kt) — replaces the
              old 3-Activity Leanback setup. -->
         <activity
             android:name=".MainActivity"
