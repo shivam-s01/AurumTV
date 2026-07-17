@@ -76,6 +76,23 @@ object AuthRepository {
         }
     }
 
+    /** Used by the QR pairing flow: the phone obtained the Google idToken
+     *  via a normal web Google Sign-In button, the Worker handed it back to
+     *  the TV over polling, and this does the exact same Supabase call
+     *  signInWithGoogle() does — same server client id, same resulting
+     *  Supabase user, just without the TV's Credential Manager step. */
+    suspend fun signInWithIdToken(idToken: String): String? {
+        return try {
+            SupabaseClientProvider.auth.signInWith(IDToken) {
+                this.idToken = idToken
+                provider = Google
+            }
+            null
+        } catch (e: Exception) {
+            "Sign-in failed: ${e.message}"
+        }
+    }
+
     suspend fun signOut() {
         runCatching { SupabaseClientProvider.auth.signOut() }
     }

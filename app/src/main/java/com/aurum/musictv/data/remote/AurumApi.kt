@@ -1,9 +1,12 @@
-package com.aurum.musictv.data
+package com.aurum.musictv.data.remote
 
+import com.aurum.musictv.data.model.Song
+import com.aurum.musictv.data.model.SongSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
@@ -144,6 +147,50 @@ object AurumApi {
                     ?: song.streamUrl
             }
             SongSource.LOCAL -> song.streamUrl
+        }
+    }
+
+    data class PairingSession(val code: String, val confirmUrl: String, val expiresInSeconds: Int)
+
+    /** Starts a new TV<->phone pairing session. Worker generates a short
+     *  code + stores it in KV; TV shows it as a QR of confirmUrl. */
+    suspend fun createPairingSession(): PairingSession? = withContext(Dispatchers.IO) {
+        try {
+            val req = Request.Builder()
+                .url("$WORKER/api/pair/create")
+                .post(ByteArray(0).toRequestBody(null))
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                val body = resp.body?.string() ?: return@withContext null
+                val json = JSONObject(body)
+                if (!json.optBoolean("success")) return@withContext null
+                PairingSession(
+                    code = json.optString("code"),
+                    confirmUrl = json.optString("confirmUrl"),
+                    expiresInSeconds = json.optInt("expiresInSeconds", 120),
+                )
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** Polls pairing status. Returns the Google idToken once the phone has
+     *  confirmed sign-in, null while still pending/expired. */
+    suspend fun pollPairingStatus(code: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val req = Request.Builder().url("$WORKER/api/pair/$code/status").build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                val body = resp.body?.string() ?: return@withContext null
+                val json = JSONObject(body)
+                if (json.optString("status") == "approved") {
+                    json.optString("idToken").takeIf { it.isNotBlank() }
+                } else null
+            }
+        } catch (e: Exception) {
+            null
         }
     }
 

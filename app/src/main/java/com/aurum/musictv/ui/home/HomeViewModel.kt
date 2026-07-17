@@ -16,6 +16,10 @@ import kotlinx.coroutines.launch
 data class HomeUiState(
     val isLoading: Boolean = true,
     val greetingName: String? = null,
+    /** Google avatar URL when signed in, null otherwise -> ProfileAvatar
+     *  falls back to a default icon. Sign-in is optional; this is purely
+     *  cosmetic and never gates anything. */
+    val avatarUrl: String? = null,
     val continueListening: Song? = null,
     val trending: List<Song> = emptyList(),
     val newReleases: List<Song> = emptyList(),
@@ -43,6 +47,7 @@ class HomeViewModel : ViewModel() {
             _uiState.value = _uiState.value.copy(
                 isLoading = true,
                 greetingName = AuthRepository.displayName,
+                avatarUrl = AuthRepository.avatarUrl,
             )
 
             // Uses the same homeSections() the phone app's home screen is
@@ -103,4 +108,14 @@ class HomeViewModel : ViewModel() {
     }
 
     fun refresh() = loadHome()
+
+    /** Called when returning from the Auth screen (sign-in, sign-out, or
+     *  just dismissed) so the profile icon / greeting reflect the latest
+     *  state without a full home reload. */
+    fun refreshAuthState() {
+        _uiState.value = _uiState.value.copy(
+            greetingName = AuthRepository.displayName,
+            avatarUrl = AuthRepository.avatarUrl,
+        )
+    }
 }
