@@ -65,7 +65,7 @@ class HomeBrowseFragment : BrowseSupportFragment() {
                 emptyList()
             }
             if (sections.isEmpty()) {
-                showMessage("No songs loaded — check network connection")
+                showMessage("Empty: ${AurumApi.lastDiagnostic}")
                 return@launch
             }
             sections.forEach { (title, songs) ->
@@ -79,10 +79,15 @@ class HomeBrowseFragment : BrowseSupportFragment() {
 
     /** Visible on-device feedback for load failures — without this, an
      *  empty home screen gives no signal about whether the network call
-     *  failed, returned zero results, or something threw silently. A
-     *  Toast is enough for TV since there's no logcat access on most
-     *  boxes during normal use. */
+     *  failed, returned zero results, or something threw silently. Using
+     *  an AlertDialog rather than Toast since the diagnostic message can
+     *  be long (URL + body snippet) and Toast auto-dismisses before it's
+     *  fully readable. */
     private fun showMessage(message: String) {
-        android.widget.Toast.makeText(requireContext(), message, android.widget.Toast.LENGTH_LONG).show()
+        android.app.AlertDialog.Builder(requireContext())
+            .setTitle("Diagnostic")
+            .setMessage(message)
+            .setPositiveButton("OK", null)
+            .show()
     }
 }

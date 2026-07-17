@@ -19,11 +19,13 @@ object AurumApi {
     // Same Worker URL as the phone app (lib/services/api_service.dart:209).
     private const val WORKER = "https://aurum-worker.shivamsharma962122.workers.dev"
 
-    // Tuned for TV-box WiFi, which is often the weakest link in the chain
-    // on budget hardware — a small bounded connection pool avoids holding
-    // idle sockets that cost memory for no benefit on a single-screen app,
-    // and retryOnConnectionFailure smooths over the brief drops that cheap
-    // WiFi chipsets are prone to.
+    /** Last raw diagnostic captured from a search() call — surfaced by
+     *  HomeBrowseFragment's Toast so on-device failures are debuggable
+     *  without logcat access. Not thread-safe by design; this is a
+     *  single-user single-screen TV app, last-write-wins is fine here. */
+    var lastDiagnostic: String = ""
+        private set
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(8, TimeUnit.SECONDS)
@@ -53,27 +55,44 @@ object AurumApi {
     }
 
     /** Worker responses come back in one of two shapes depending on
-     *  endpoint/route: {"data": [...]} or a bare [...] array. The phone
-     *  app's api_service.dart handles both the same way (see its
-     *  `data is Map ? data['data'] as List : data is List ? data : null`
-     *  pattern) — this mirrors that exactly rather than assuming a nested
-     *  {"data": {"results": [...]}} shape, which the Worker doesn't use. */
+     *  endpoint/route: {"data": [...]} or a bare [...] array. This also
+     *  records exactly what happened (HTTP code, body snippet, or
+     *  exception) into lastDiagnostic instead of silently swallowing
+     *  failures — the previous version returned an empty JSONArray() on
+     *  every failure path with no way to tell network error apart from
+     *  empty-but-successful response apart from parse failure. */
     private suspend fun getJsonArrayOrObjectData(url: String): JSONArray {
         return withContext(Dispatchers.IO) {
             try {
                 val req = Request.Builder().url(url).build()
                 client.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) return@withContext JSONArray()
-                    val body = resp.body?.string() ?: return@withContext JSONArray()
+                    val code = resp.code
+                    if (!resp.isSuccessful) {
+                        lastDiagnostic = "HTTP $code from $url"
+                        return@withContext JSONArray()
+                    }
+                    val body = resp.body?.string()
+                    if (body.isNullOrBlank()) {
+                        lastDiagnostic = "Empty body (HTTP $code) from $url"
+                        return@withContext JSONArray()
+                    }
                     val trimmed = body.trimStart()
-                    if (trimmed.startsWith("[")) {
+                    val array = if (trimmed.startsWith("[")) {
                         JSONArray(body)
                     } else {
                         val obj = JSONObject(body)
                         obj.optJSONArray("data") ?: JSONArray()
                     }
+                    if (array.length() == 0) {
+                        lastDiagnostic = "Parsed 0 items. Body snippet: " +
+                            body.take(200)
+                    } else {
+                        lastDiagnostic = "OK: ${array.length()} items"
+                    }
+                    array
                 }
             } catch (e: Exception) {
+                lastDiagnostic = "Exception: ${e.javaClass.simpleName}: ${e.message}"
                 JSONArray()
             }
         }
@@ -98,7 +117,6 @@ object AurumApi {
         when (song.source) {
             SongSource.YOUTUBE -> {
                 val proxyUrl = "$WORKER/api/yt-proxy?id=${song.id}"
-                // Probe first (matches phone app's Range-request probe pattern)
                 try {
                     val probe = Request.Builder()
                         .url(proxyUrl)
@@ -127,9 +145,6 @@ object AurumApi {
             val o = arr.optJSONObject(i) ?: continue
             val id = o.optString("id")
             if (id.isBlank()) continue
-            // JioSaavn/Worker response uses "song" as the title field, not
-            // "title" or "name" — matches api_service.dart's _songFromSaavn
-            // exactly (title = j['song'] ?? j['name'] ?? j['title']).
             val title = o.optString("song")
                 .ifBlank { o.optString("name") }
                 .ifBlank { o.optString("title", "Unknown") }
@@ -150,10 +165,6 @@ object AurumApi {
         return out
     }
 
-    /** Artist is a nested object — {"artists": {"primary": [{"name": "..."}]}}
-     *  — not a flat string field. Falls back to primary_artists/singers/
-     *  artist string fields for older/alternate response shapes, same as
-     *  api_service.dart's _songFromSaavn. */
     private fun extractArtist(o: JSONObject): String {
         val artistsField = o.optJSONObject("artists")
         val primary = artistsField?.optJSONArray("primary")
@@ -175,7 +186,6 @@ object AurumApi {
     private fun extractArtwork(o: JSONObject): String? {
         val imageField = o.opt("image")
         if (imageField is JSONArray && imageField.length() > 0) {
-            // Same "take last/highest-quality" pattern as song.dart:79-85
             val last = imageField.optJSONObject(imageField.length() - 1)
             return last?.optString("url") ?: last?.optString("link")
         }
