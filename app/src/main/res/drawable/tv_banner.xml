@@ -3,7 +3,7 @@
      launcher banner. Replace with your real Aurum logo banner — keep it
      as a 9-patch PNG or vector if possible, avoid a big flat PNG here
      since this asset ships in every density bucket if not careful. -->
-<vector xmlns:android="http://schemas.android.com/apk/res/vector"
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="320dp"
     android:height="180dp"
     android:viewportWidth="320"
