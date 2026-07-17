@@ -167,7 +167,11 @@ dependencies {
     implementation(platform("io.github.jan-tennert.supabase:bom:3.0.3"))
     implementation("io.github.jan-tennert.supabase:auth-kt")
     implementation("io.github.jan-tennert.supabase:postgrest-kt")
-    implementation("io.ktor:ktor-client-okhttp:2.3.12")
+    // Don't pin ktor-client-okhttp's own version — let the Supabase BOM
+    // (3.0.3, which needs Ktor 3.x) resolve it. A manually pinned 2.3.12
+    // resolves outside the BOM and version-clashes with the rest of the
+    // Ktor artifacts -> HttpTimeout NoClassDefFoundError at runtime.
+    implementation("io.ktor:ktor-client-okhttp")
 
     // Google Sign-In (Credential Manager — the modern replacement for the
     // old Play Services GoogleSignInClient, smaller and TV-compatible).
