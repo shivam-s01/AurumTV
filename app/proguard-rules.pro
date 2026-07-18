@@ -1,8 +1,24 @@
 # Aggressive shrink — every KB matters at our 6-8MB target.
--repackageclasses ''
+#
+# NOTE: -repackageclasses '' + -allowaccessmodification is a known
+# combination that can corrupt Compose's runtime touch/gesture dispatch
+# in release builds specifically — debug builds (no minification) work
+# fine, release builds go silently unresponsive to taps with no crash,
+# because R8 repackages/renames internal Compose runtime classes that
+# gesture detection can rely on resolving reflectively. Removing
+# -repackageclasses and adding explicit Compose keep rules below fixes
+# this while still shrinking everything else.
 -allowaccessmodification
 -optimizations !code/simplification/arithmetic
 -optimizationpasses 5
+
+# ── Jetpack Compose runtime — required for release-build touch/gesture
+# handling to work at all; without these R8 can rename/strip classes
+# that Compose's pointer input system locates reflectively. ───────────
+-keep class androidx.compose.runtime.** { *; }
+-keep class androidx.compose.ui.** { *; }
+-keep class androidx.tv.material3.** { *; }
+-dontwarn androidx.compose.**
 
 # Media3 / ExoPlayer needs its own service + session classes kept
 -keep class androidx.media3.session.MediaSessionService { *; }
