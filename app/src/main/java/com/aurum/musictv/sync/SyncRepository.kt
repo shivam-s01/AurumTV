@@ -1,11 +1,14 @@
 package com.aurum.musictv.sync
 
+import com.aurum.musictv.data.model.LikedSongRow
 import com.aurum.musictv.data.model.PlaybackStateRow
 import com.aurum.musictv.data.model.ProfileRow
 import com.aurum.musictv.data.model.QueueRow
+import com.aurum.musictv.data.model.RecentlyPlayedRow
 import com.aurum.musictv.data.model.Song
 import com.aurum.musictv.data.model.SongDto
 import com.aurum.musictv.data.model.toDto
+import com.aurum.musictv.data.model.toSong
 import com.aurum.musictv.data.remote.SupabaseClientProvider
 import io.github.jan.supabase.postgrest.from
 import kotlinx.coroutines.CoroutineScope
