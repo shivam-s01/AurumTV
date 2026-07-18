@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 private val Context.dataStore by preferencesDataStore(name = "aurum_tv_settings")
@@ -79,6 +80,6 @@ object SettingsStore {
     }
 
     private suspend fun Flow<AppSettings>.collectFirstInto(onEach: (AppSettings) -> Unit) {
-        kotlinx.coroutines.flow.first { onEach(it); true }
+        this.first { value -> onEach(value); true }
     }
 }

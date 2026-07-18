@@ -127,7 +127,6 @@ dependencies {
     // no compose-animation-graphics, etc).
     val composeBom = platform("androidx.compose:compose-bom:2025.10.01")
     implementation(composeBom)
-    implementation("androidx.tv:tv-foundation:1.0.0")
     implementation("androidx.tv:tv-material:1.1.0")
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
