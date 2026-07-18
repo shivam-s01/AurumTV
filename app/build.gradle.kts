@@ -125,7 +125,7 @@ dependencies {
     // out of the box — we only pull the BOM + the two TV artifacts, no
     // full Compose UI toolkit bloat (no compose-material3 for phones,
     // no compose-animation-graphics, etc).
-    val composeBom = platform("androidx.compose:compose-bom:2024.09.00")
+    val composeBom = platform("androidx.compose:compose-bom:2025.10.01")
     implementation(composeBom)
     implementation("androidx.tv:tv-foundation:1.0.0")
     implementation("androidx.tv:tv-material:1.1.0")

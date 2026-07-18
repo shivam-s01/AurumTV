@@ -3,6 +3,9 @@ package com.aurum.musictv.data.remote
 import com.aurum.musictv.data.model.Song
 import com.aurum.musictv.data.model.SongSource
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -297,11 +300,11 @@ object AurumApi {
      *  same query and interleaves them — so a "Bollywood Hits" row is
      *  genuinely both YT + Saavn, not just Saavn with a YouTube-shaped
      *  fallback that only kicks in on failure. */
-    suspend fun homeSections(): List<Pair<String, List<Song>>> = kotlinx.coroutines.coroutineScope {
+    suspend fun homeSections(): List<Pair<String, List<Song>>> = coroutineScope {
         val chosenPools = sectionPools.shuffled().take(8)
-        val semaphore = kotlinx.coroutines.sync.Semaphore(3)
+        val semaphore = Semaphore(3)
         val deferred = chosenPools.map { (title, pool) ->
-            kotlinx.coroutines.async {
+            async {
                 semaphore.withPermit {
                     val query = pool.random()
                     val saavnSongs = search(query, limit = 18)
