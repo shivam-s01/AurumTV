@@ -70,16 +70,26 @@ object SyncRepository {
      *  screen doesn't need sub-second sync, and an always-open socket +
      *  its background dispatcher is measurable RAM/battery overhead on a
      *  1GB RAM box for a feature the user glances at occasionally. 8s is
-     *  imperceptible for a "resume from phone" banner. */
-    fun observePlaybackState(scope: CoroutineScope): Flow<PlaybackStateRow> = flow {
+     *  imperceptible for a "resume from phone" banner.
+     *
+     *  [isActive] gates the network call itself, not just what happens
+     *  with the result — while it returns false (e.g. Home isn't the
+     *  visible screen) this loop does nothing but sleep, zero requests
+     *  fired, zero CPU/radio wakeup. */
+    fun observePlaybackState(
+        scope: CoroutineScope,
+        isActive: () -> Boolean = { true },
+    ): Flow<PlaybackStateRow> = flow {
         var lastSongId: String? = null
         var lastPositionMs: Long? = null
         while (true) {
-            val row = fetchPlaybackState()
-            if (row != null && (row.songId != lastSongId || row.positionMs != lastPositionMs)) {
-                lastSongId = row.songId
-                lastPositionMs = row.positionMs
-                emit(row)
+            if (isActive()) {
+                val row = fetchPlaybackState()
+                if (row != null && (row.songId != lastSongId || row.positionMs != lastPositionMs)) {
+                    lastSongId = row.songId
+                    lastPositionMs = row.positionMs
+                    emit(row)
+                }
             }
             delay(8_000)
         }
@@ -120,14 +130,21 @@ object SyncRepository {
     /** Polls the premium flag every 30s — flips shortly after a purchase
      *  completes on mobile, no TV restart needed. 30s is fine here: even
      *  Spotify-style cross-device premium unlocks aren't instant, and this
-     *  avoids a second always-open socket alongside playback polling. */
-    fun observeIsPremium(scope: CoroutineScope): Flow<Boolean> = flow {
+     *  avoids a second always-open socket alongside playback polling.
+     *  Same [isActive] gate as [observePlaybackState] — no request fired
+     *  while Home isn't the visible screen. */
+    fun observeIsPremium(
+        scope: CoroutineScope,
+        isActive: () -> Boolean = { true },
+    ): Flow<Boolean> = flow {
         var last: Boolean? = null
         while (true) {
-            val premium = fetchIsPremium()
-            if (premium != last) {
-                last = premium
-                emit(premium)
+            if (isActive()) {
+                val premium = fetchIsPremium()
+                if (premium != last) {
+                    last = premium
+                    emit(premium)
+                }
             }
             delay(30_000)
         }
@@ -198,5 +215,18 @@ object SyncRepository {
                 filter { eq("user_id", uid); eq("song_id", songId) }
             }
         }
+    }
+
+    /** Single-song existence check for the Player screen's heart icon —
+     *  avoids pulling the entire liked_songs list just to know one
+     *  boolean. Cheap indexed lookup on (user_id, song_id). */
+    suspend fun isSongLiked(songId: String): Boolean {
+        val uid = userId ?: return false
+        return runCatching {
+            SupabaseClientProvider.postgrest.from("liked_songs")
+                .select { filter { eq("user_id", uid); eq("song_id", songId) } }
+                .decodeList<LikedSongRow>()
+                .isNotEmpty()
+        }.getOrDefault(false)
     }
 }

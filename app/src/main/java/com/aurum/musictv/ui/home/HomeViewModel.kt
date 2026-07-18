@@ -8,6 +8,7 @@ import com.aurum.musictv.data.model.toSong
 import com.aurum.musictv.data.remote.AurumApi
 import com.aurum.musictv.sync.AuthRepository
 import com.aurum.musictv.sync.SyncRepository
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -44,10 +45,43 @@ class HomeViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
+    // HomeViewModel is retained for the whole Activity lifetime (that's
+    // how viewModel() works), but the two polling loops below only make
+    // sense while Home is the screen actually on screen — the "Playing
+    // on phone" banner and premium-flag refresh are both things the user
+    // can only see on Home. Without this flag they kept firing a network
+    // request every 8s/30s even while the user was sitting on Player,
+    // Search, Library, or Settings — pure wasted radio/CPU wakeups on a
+    // 1GB box for a screen that isn't even visible. MainActivity flips
+    // this via setHomeVisible() on every screen change.
+    private var isHomeVisible = true
+
+    fun setHomeVisible(visible: Boolean) {
+        isHomeVisible = visible
+    }
+
     init {
         loadHome()
         observeRemotePlayback()
         observePremium()
+        autoRefreshPeriodically()
+    }
+
+    /** TV has no swipe-to-refresh gesture (D-pad only), so instead of
+     *  relying on the user to manually trigger refresh(), Home reloads
+     *  itself every 10 minutes while it's the active screen — the
+     *  randomized query pools in AurumApi.homeSections() mean each reload
+     *  actually surfaces different songs, not just a repeat network call.
+     *  Skipped entirely while Home isn't visible — no point refreshing
+     *  browse rows the user isn't looking at; it'll refresh next time
+     *  they land back on Home instead (see setHomeVisible). */
+    private fun autoRefreshPeriodically() {
+        viewModelScope.launch {
+            while (true) {
+                delay(10 * 60 * 1000L)
+                if (isHomeVisible) loadHome()
+            }
+        }
     }
 
     private fun loadHome() {
@@ -98,7 +132,7 @@ class HomeViewModel : ViewModel() {
      *  realtime wiring). */
     private fun observeRemotePlayback() {
         viewModelScope.launch {
-            SyncRepository.observePlaybackState(viewModelScope).collect { row ->
+            SyncRepository.observePlaybackState(viewModelScope, isActive = { isHomeVisible }).collect { row ->
                 if (row.device != "tv") {
                     _uiState.value = _uiState.value.copy(remoteNowPlaying = row)
                 }
@@ -108,7 +142,7 @@ class HomeViewModel : ViewModel() {
 
     private fun observePremium() {
         viewModelScope.launch {
-            SyncRepository.observeIsPremium(viewModelScope).collect { premium ->
+            SyncRepository.observeIsPremium(viewModelScope, isActive = { isHomeVisible }).collect { premium ->
                 _uiState.value = _uiState.value.copy(isPremium = premium)
             }
         }

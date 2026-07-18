@@ -41,12 +41,6 @@
             </intent-filter>
         </activity>
 
-        <!-- TEMPORARY diagnostic activity, see CrashDisplayActivity kdoc -->
-        <activity
-            android:name=".CrashDisplayActivity"
-            android:exported="false"
-            android:theme="@style/Theme.AurumTv" />
-
         <service
             android:name=".player.AurumTvPlaybackService"
             android:exported="false"

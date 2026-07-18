@@ -8,11 +8,14 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.aurum.musictv.data.model.Song
 import com.aurum.musictv.data.remote.AurumApi
+import com.aurum.musictv.data.remote.NetworkResilience
+import com.aurum.musictv.settings.SettingsStore
 import com.aurum.musictv.sync.SyncRepository
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +30,19 @@ data class PlayerUiState(
     val positionMs: Long = 0,
     val durationMs: Long = 0,
     val isBuffering: Boolean = false,
+    /** Non-null right after a tap fails to produce anything playable —
+     *  this is what used to be a silent no-op. UI can show this as a
+     *  toast/snackbar so a click always gives feedback. */
+    val playbackError: String? = null,
+    /** True while resolveStreamUrl/retry is in flight for a tap that
+     *  hasn't started playing yet — separate from ExoPlayer's own
+     *  STATE_BUFFERING (which only exists once a MediaItem is prepared). */
+    val isResolving: Boolean = false,
+    /** Whether the current song is in the user's Liked Songs — drives the
+     *  heart icon on PlayerScreen. Kept here rather than fetched fresh by
+     *  the screen so it survives navigating away and back without an
+     *  extra round-trip. */
+    val isCurrentSongLiked: Boolean = false,
 )
 
 /**
@@ -44,6 +60,7 @@ class PlayerManager(private val context: Context) {
 
     private var controller: MediaController? = null
     private var controllerFuture: com.google.common.util.concurrent.ListenableFuture<MediaController>? = null
+    private var playerListener: Player.Listener? = null
 
     private val _uiState = MutableStateFlow(PlayerUiState())
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
@@ -78,7 +95,7 @@ class PlayerManager(private val context: Context) {
     }
 
     private fun attachListener() {
-        controller?.addListener(object : Player.Listener {
+        val listener = object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _uiState.value = _uiState.value.copy(isPlaying = isPlaying)
                 pushStateNow()
@@ -91,10 +108,32 @@ class PlayerManager(private val context: Context) {
                     durationMs = c.duration.coerceAtLeast(0),
                 )
                 if (playbackState == Player.STATE_ENDED) {
-                    playNext()
+                    scope.launch { maybeAutoplayNext() }
                 }
             }
-        })
+
+            // A track that fails mid-playback (expired stream URL, network
+            // drop) used to just stop with no UI signal and no recovery —
+            // this surfaces it and auto-skips so one bad link in a queue
+            // doesn't stall the whole session.
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                _uiState.value = _uiState.value.copy(
+                    playbackError = "Couldn't play \"${_uiState.value.currentSong?.title ?: "song"}\" — skipping",
+                    isBuffering = false,
+                )
+                scope.launch { maybeAutoplayNext() }
+            }
+        }
+        playerListener = listener
+        controller?.addListener(listener)
+    }
+
+    /** Respects the Autoplay setting: if off, playback simply stops at the
+     *  end of the current track instead of always continuing into the
+     *  next queue item. */
+    private suspend fun maybeAutoplayNext() {
+        val autoplay = runCatching { SettingsStore.snapshot(context).autoplay }.getOrDefault(true)
+        if (autoplay) playNext()
     }
 
     private fun pushStateNow() {
@@ -110,29 +149,112 @@ class PlayerManager(private val context: Context) {
     }
 
     fun playQueue(songs: List<Song>, startIndex: Int) {
-        _uiState.value = _uiState.value.copy(queue = songs, currentIndex = startIndex)
+        _uiState.value = _uiState.value.copy(queue = songs, currentIndex = startIndex, playbackError = null)
         scope.launch { SyncRepository.pushQueue(songs, startIndex) }
         playIndex(startIndex)
     }
 
-    private fun playIndex(index: Int) {
+    /** Clears a shown playback error — call after the UI has displayed it
+     *  so it doesn't linger in state forever. */
+    fun dismissPlaybackError() {
+        _uiState.value = _uiState.value.copy(playbackError = null)
+    }
+
+    private fun playIndex(index: Int, skipAttempt: Int = 0) {
         val queue = _uiState.value.queue
         val song = queue.getOrNull(index) ?: return
-        _uiState.value = _uiState.value.copy(currentSong = song, currentIndex = index)
+        _uiState.value = _uiState.value.copy(
+            currentSong = song,
+            currentIndex = index,
+            isResolving = true,
+            playbackError = null,
+        )
 
         scope.launch {
             // MediaController connects asynchronously (see init{}) — if the
             // user taps a song from Search (or right after app launch)
-            // before that connection lands, `controller` is still null and
-            // this used to silently no-op with nothing playing and no
-            // error. Wait briefly for it instead of bailing immediately.
-            val c = awaitController() ?: return@launch
+            // before that connection lands, `controller` is still null.
+            // Wait briefly for it instead of bailing immediately.
+            val c = awaitController()
+            if (c == null) {
+                _uiState.value = _uiState.value.copy(
+                    isResolving = false,
+                    playbackError = "Player not ready — try again",
+                )
+                return@launch
+            }
+
+            if (!NetworkResilience.isOnline(context)) {
+                _uiState.value = _uiState.value.copy(
+                    isResolving = false,
+                    playbackError = "You're offline — check your connection",
+                )
+                return@launch
+            }
+
+            // This was the exact click bug: resolveStreamUrl returning
+            // null meant this just `return@launch`ed with the song already
+            // set as "current" but nothing actually playing — looked like
+            // the click did nothing. AurumApi.resolveStreamUrl now retries
+            // + falls back to YouTube internally; if it STILL fails here,
+            // auto-skip to the next song (up to 3 tries) instead of
+            // leaving the UI stuck.
             val streamUrl = song.streamUrl ?: AurumApi.resolveStreamUrl(song)
-            if (streamUrl == null) return@launch
+            if (streamUrl == null) {
+                _uiState.value = _uiState.value.copy(isResolving = false)
+                if (skipAttempt < 3 && index + 1 < queue.size) {
+                    _uiState.value = _uiState.value.copy(
+                        playbackError = "Couldn't play \"${song.title}\" — trying next",
+                    )
+                    playIndex(index + 1, skipAttempt + 1)
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        playbackError = "Couldn't play \"${song.title}\" — check your connection",
+                    )
+                }
+                return@launch
+            }
+
             c.setMediaItem(MediaItem.fromUri(streamUrl))
             c.prepare()
             c.play()
+            _uiState.value = _uiState.value.copy(isResolving = false)
             SyncRepository.logRecentlyPlayed(song)
+            refreshLikedState(song)
+        }
+    }
+
+    /** Checks whether [song] is already in Liked Songs and updates the
+     *  heart-icon state accordingly. Called on every song change so
+     *  Player never shows a stale like-state carried over from the
+     *  previous track. */
+    private fun refreshLikedState(song: Song) {
+        scope.launch {
+            val liked = runCatching { SyncRepository.isSongLiked(song.id) }.getOrDefault(false)
+            // Guard against a slow lookup landing after the user has
+            // already skipped to a different song.
+            if (_uiState.value.currentSong?.id == song.id) {
+                _uiState.value = _uiState.value.copy(isCurrentSongLiked = liked)
+            }
+        }
+    }
+
+    /** Toggles like state for the currently playing song — the "save to
+     *  Library" action behind the heart icon on PlayerScreen. Optimistic
+     *  UI flip (feels instant on a remote), reconciled with the real
+     *  Supabase result — reverted if the write actually fails. */
+    fun toggleLikeCurrentSong() {
+        val song = _uiState.value.currentSong ?: return
+        val wasLiked = _uiState.value.isCurrentSongLiked
+        _uiState.value = _uiState.value.copy(isCurrentSongLiked = !wasLiked)
+        scope.launch {
+            runCatching {
+                if (wasLiked) SyncRepository.unlikeSong(song.id) else SyncRepository.likeSong(song)
+            }.onFailure {
+                if (_uiState.value.currentSong?.id == song.id) {
+                    _uiState.value = _uiState.value.copy(isCurrentSongLiked = wasLiked)
+                }
+            }
         }
     }
 
@@ -181,6 +303,14 @@ class PlayerManager(private val context: Context) {
     }
 
     fun release() {
+        // Was leaking: the position-ticker and sync-push `while(true)`
+        // coroutines launched in init{} were never cancelled here, so
+        // they kept running (and the Player.Listener stayed attached)
+        // even after MainActivity.onDestroy() called this. On a 1GB-RAM
+        // TV box that's a slow background leak every relaunch.
+        scope.cancel()
+        playerListener?.let { controller?.removeListener(it) }
+        playerListener = null
         controllerFuture?.let { MediaController.releaseFuture(it) }
         controller = null
         controllerFuture = null

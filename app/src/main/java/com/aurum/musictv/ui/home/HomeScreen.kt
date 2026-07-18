@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.tv.material3.Text
 import com.aurum.musictv.data.model.Song
+import com.aurum.musictv.data.model.toSong
 import com.aurum.musictv.ui.components.SongCard
 import com.aurum.musictv.ui.theme.AurumColors
 
@@ -50,8 +51,10 @@ import com.aurum.musictv.ui.theme.AurumColors
 @Composable
 fun HomeScreen(
     onSongClick: (Song, List<Song>) -> Unit,
+    onResumeClick: (Song, Long) -> Unit,
     onSearchClick: () -> Unit,
     onProfileClick: () -> Unit,
+    onSettingsClick: () -> Unit,
     viewModel: HomeViewModel = viewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -86,6 +89,7 @@ fun HomeScreen(
                     avatarUrl = state.avatarUrl,
                     onSearchClick = onSearchClick,
                     onProfileClick = onProfileClick,
+                    onSettingsClick = onSettingsClick,
                     modifier = Modifier.padding(top = 20.dp),
                 )
             }
@@ -95,6 +99,13 @@ fun HomeScreen(
             item {
                 ResumeOnTvBanner(
                     title = remote.songData?.title ?: "Something",
+                    onResume = {
+                        val song = remote.songData?.toSong()
+                        if (song != null) {
+                            onResumeClick(song, remote.positionMs)
+                            viewModel.dismissRemoteNowPlaying()
+                        }
+                    },
                     onDismiss = viewModel::dismissRemoteNowPlaying,
                 )
             }
@@ -286,6 +297,7 @@ private fun TopBar(
     avatarUrl: String?,
     onSearchClick: () -> Unit,
     onProfileClick: () -> Unit,
+    onSettingsClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -325,6 +337,27 @@ private fun TopBar(
                     fontSize = 14.sp,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
                 )
+            }
+            androidx.tv.material3.Surface(
+                onClick = onSettingsClick,
+                shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(
+                    shape = androidx.compose.foundation.shape.CircleShape,
+                ),
+                colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
+                    containerColor = AurumColors.AmoledBgSurface,
+                    focusedContainerColor = AurumColors.AmoledBgElevated,
+                ),
+                border = androidx.tv.material3.ClickableSurfaceDefaults.border(
+                    focusedBorder = androidx.tv.material3.Border(
+                        border = androidx.compose.foundation.BorderStroke(2.dp, AurumColors.Gold),
+                        shape = androidx.compose.foundation.shape.CircleShape,
+                    ),
+                ),
+                modifier = Modifier.size(40.dp),
+            ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("\u2699", color = AurumColors.TextSecondary, fontSize = 18.sp)
+                }
             }
             ProfileAvatar(avatarUrl = avatarUrl, onClick = onProfileClick)
         }
@@ -379,40 +412,72 @@ private fun ProfileAvatar(avatarUrl: String?, onClick: () -> Unit) {
 }
 
 @Composable
-private fun ResumeOnTvBanner(title: String, onDismiss: () -> Unit) {
+private fun ResumeOnTvBanner(title: String, onResume: () -> Unit, onDismiss: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 48.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = "Playing on phone: $title",
             color = AurumColors.Gold,
             fontSize = 16.sp,
         )
-        androidx.tv.material3.Surface(
-            onClick = onDismiss,
-            shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(
-                shape = RoundedCornerShape(6.dp),
-            ),
-            colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
-                containerColor = AurumColors.AmoledBgSurface,
-                focusedContainerColor = AurumColors.AmoledBgElevated,
-            ),
-            border = androidx.tv.material3.ClickableSurfaceDefaults.border(
-                focusedBorder = androidx.tv.material3.Border(
-                    border = androidx.compose.foundation.BorderStroke(2.dp, AurumColors.Gold),
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            // This is the actual point of the banner — without a Resume
+            // action it was just a notice with nowhere to go, even
+            // though PlayerManager.resumeFrom() (queues the song AND
+            // seeks to the synced position) already existed and was
+            // simply never called from here.
+            androidx.tv.material3.Surface(
+                onClick = onResume,
+                shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(
                     shape = RoundedCornerShape(6.dp),
                 ),
-            ),
-        ) {
-            Text(
-                "Dismiss",
-                color = AurumColors.TextSecondary,
-                fontSize = 13.sp,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-            )
+                colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
+                    containerColor = AurumColors.Gold,
+                    focusedContainerColor = AurumColors.GoldLight,
+                ),
+                border = androidx.tv.material3.ClickableSurfaceDefaults.border(
+                    focusedBorder = androidx.tv.material3.Border(
+                        border = androidx.compose.foundation.BorderStroke(2.dp, AurumColors.GoldLight),
+                        shape = RoundedCornerShape(6.dp),
+                    ),
+                ),
+            ) {
+                Text(
+                    "Resume Here",
+                    color = AurumColors.AmoledBg,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                )
+            }
+            androidx.tv.material3.Surface(
+                onClick = onDismiss,
+                shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(
+                    shape = RoundedCornerShape(6.dp),
+                ),
+                colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
+                    containerColor = AurumColors.AmoledBgSurface,
+                    focusedContainerColor = AurumColors.AmoledBgElevated,
+                ),
+                border = androidx.tv.material3.ClickableSurfaceDefaults.border(
+                    focusedBorder = androidx.tv.material3.Border(
+                        border = androidx.compose.foundation.BorderStroke(2.dp, AurumColors.Gold),
+                        shape = RoundedCornerShape(6.dp),
+                    ),
+                ),
+            ) {
+                Text(
+                    "Dismiss",
+                    color = AurumColors.TextSecondary,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
         }
     }
 }

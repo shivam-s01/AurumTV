@@ -5,8 +5,6 @@ import coil.Coil
 import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
-import java.io.PrintWriter
-import java.io.StringWriter
 
 /**
  * Configures Coil's global ImageLoader with hard caps tuned for 1GB-RAM
@@ -20,31 +18,6 @@ class AurumTvApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-
-        // TEMPORARY DIAGNOSTIC: without adb access on-device, the default
-        // "app keeps stopping" dialog gives no detail. This routes any
-        // uncaught crash to CrashDisplayActivity instead, showing the full
-        // stack trace on-screen so it can be screenshotted directly.
-        // Remove once the app is stable — this should never ship long-term
-        // since exposing raw stack traces isn't something a release build
-        // should do by default.
-        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
-        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            try {
-                val sw = StringWriter()
-                throwable.printStackTrace(PrintWriter(sw))
-                val intent = android.content.Intent(this, CrashDisplayActivity::class.java).apply {
-                    putExtra("stack_trace", sw.toString())
-                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
-                        android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK
-                }
-                startActivity(intent)
-                android.os.Process.killProcess(android.os.Process.myPid())
-                kotlin.system.exitProcess(1)
-            } catch (e: Exception) {
-                defaultHandler?.uncaughtException(thread, throwable)
-            }
-        }
 
         val imageLoader = ImageLoader.Builder(this)
             .memoryCache {
@@ -74,5 +47,27 @@ class AurumTvApp : Application() {
             .build()
 
         Coil.setImageLoader(imageLoader)
+    }
+
+    /** 1GB-RAM TV boxes hit memory pressure far more often than phones —
+     *  when the OS signals it (background, low, or critical), drop
+     *  everything reclaimable that isn't needed for current playback:
+     *  Coil's in-memory bitmap cache and the search EdgeCache. Both
+     *  rebuild cheaply from network/disk, so this is a pure memory
+     *  give-back with no correctness cost — and it's exactly the kind of
+     *  cooperative behavior that keeps Android from killing the whole
+     *  process (and audio playback with it) under pressure. */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            Coil.imageLoader(this).memoryCache?.clear()
+            com.aurum.musictv.data.remote.NetworkResilience.EdgeCache.clear()
+        }
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        Coil.imageLoader(this).memoryCache?.clear()
+        com.aurum.musictv.data.remote.NetworkResilience.EdgeCache.clear()
     }
 }

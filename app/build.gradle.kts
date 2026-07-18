@@ -182,4 +182,11 @@ dependencies {
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
+
+    // Settings persistence (Theme/Audio Quality/Autoplay/Crossfade/etc) —
+    // Preferences DataStore instead of raw SharedPreferences: async-safe,
+    // Flow-based reads so Settings screen and PlayerManager both react
+    // live to a change, without SharedPrefs' main-thread disk read risk
+    // on a slow TV box's flash storage.
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
 }
