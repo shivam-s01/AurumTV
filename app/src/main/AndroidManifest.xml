@@ -7,11 +7,14 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
-    <!-- Declares this app targets TV — required for Google TV app store
-         listing, and tells the OS not to expect a touchscreen. -->
+    <!-- Both set to required="false": lets this same APK install and run
+         on a regular phone (touch) for UI testing, as well as on TV
+         (leanback/D-pad). Switch leanback back to required="true" before
+         a Google TV Play Store submission — TV listings require it, but
+         it blocks phone installs while true. -->
     <uses-feature
         android:name="android.software.leanback"
-        android:required="true" />
+        android:required="false" />
     <uses-feature
         android:name="android.hardware.touchscreen"
         android:required="false" />
