@@ -144,4 +144,56 @@ object SyncRepository {
             )
         }
     }
+
+    /** Most recent distinct plays for the "Recently Played" / "Jump Back
+     *  In" home rows — same table [logRecentlyPlayed] writes to. Sorting
+     *  and de-duplication happen client-side (not via a postgrest
+     *  order()/limit() DSL call) since this row count is small (a few
+     *  dozen at most) and it keeps this call using the exact same
+     *  select{filter{...}} shape already proven elsewhere in this file. */
+    suspend fun fetchRecentlyPlayed(limit: Int = 20): List<Song> {
+        val uid = userId ?: return emptyList()
+        return runCatching {
+            SupabaseClientProvider.postgrest.from("recently_played")
+                .select { filter { eq("user_id", uid) } }
+                .decodeList<RecentlyPlayedRow>()
+                .asReversed() // insert() appends, so latest is last
+                .distinctBy { it.songId }
+                .take(limit)
+                .mapNotNull { it.songData?.toSong() }
+        }.getOrDefault(emptyList())
+    }
+
+    /** Distinct liked songs — backs the "Liked Songs" home row and the
+     *  Library tab. Same client-side-ordering rationale as
+     *  [fetchRecentlyPlayed] above. */
+    suspend fun fetchLikedSongs(limit: Int = 50): List<Song> {
+        val uid = userId ?: return emptyList()
+        return runCatching {
+            SupabaseClientProvider.postgrest.from("liked_songs")
+                .select { filter { eq("user_id", uid) } }
+                .decodeList<LikedSongRow>()
+                .asReversed()
+                .take(limit)
+                .mapNotNull { it.songData?.toSong() }
+        }.getOrDefault(emptyList())
+    }
+
+    suspend fun likeSong(song: Song) {
+        val uid = userId ?: return
+        runCatching {
+            SupabaseClientProvider.postgrest.from("liked_songs").upsert(
+                LikedSongRow(userId = uid, songId = song.id, songData = song.toDto())
+            )
+        }
+    }
+
+    suspend fun unlikeSong(songId: String) {
+        val uid = userId ?: return
+        runCatching {
+            SupabaseClientProvider.postgrest.from("liked_songs").delete {
+                filter { eq("user_id", uid); eq("song_id", songId) }
+            }
+        }
+    }
 }

@@ -110,15 +110,25 @@ object AurumApi {
     }
 
     suspend fun homeSections(): List<Pair<String, List<Song>>> {
-        // Reuses the same "new releases" + trending search-backed endpoints
-        // your phone home screen uses, just fewer of them for a lighter
-        // TV landing page. Extend this once the base app is confirmed
-        // working smoothly on-device.
+        // Reuses the same search-backed endpoint your phone home screen
+        // uses, just spread across more curated queries so the TV
+        // landing page has real content in every section the premium
+        // layout expects (see HomeScreen for hero + rows).
         val trending = search("trending 2026", limit = 15)
+        val newReleases = search("new songs 2026", limit = 15)
         val bollywood = search("bollywood hits", limit = 15)
+        val topCharts = search("top charts", limit = 15)
+        val madeForYou = search("top hits playlist", limit = 15)
+        val loveSongs = search("love songs hits", limit = 15)
+        val partyMix = search("party dance hits", limit = 15)
         return listOfNotNull(
             "Trending Now".takeIf { trending.isNotEmpty() }?.let { it to trending },
+            "New Releases".takeIf { newReleases.isNotEmpty() }?.let { it to newReleases },
+            "Made For You".takeIf { madeForYou.isNotEmpty() }?.let { it to madeForYou },
+            "Top Charts".takeIf { topCharts.isNotEmpty() }?.let { it to topCharts },
             "Bollywood Hits".takeIf { bollywood.isNotEmpty() }?.let { it to bollywood },
+            "Love Songs".takeIf { loveSongs.isNotEmpty() }?.let { it to loveSongs },
+            "Party Mix".takeIf { partyMix.isNotEmpty() }?.let { it to partyMix },
         )
     }
 

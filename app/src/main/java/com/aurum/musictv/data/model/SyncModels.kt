@@ -44,6 +44,24 @@ data class SongDto(
     val source: String = "SAAVN",
 )
 
+/** Mirrors one row of `recently_played` — written by [Song.toDto] fire-and-
+ *  forget on play, read back for the "Recently Played" / "Jump Back In"
+ *  home rows. */
+@Serializable
+data class RecentlyPlayedRow(
+    @SerialName("user_id") val userId: String,
+    @SerialName("song_id") val songId: String,
+    @SerialName("song_data") val songData: SongDto? = null,
+)
+
+/** Mirrors one row of `liked_songs` — one row per (user, song). */
+@Serializable
+data class LikedSongRow(
+    @SerialName("user_id") val userId: String,
+    @SerialName("song_id") val songId: String,
+    @SerialName("song_data") val songData: SongDto? = null,
+)
+
 fun Song.toDto() = SongDto(id, title, artist, albumArtUrl, durationSec, source.name)
 fun SongDto.toSong() = Song(
     id = id,

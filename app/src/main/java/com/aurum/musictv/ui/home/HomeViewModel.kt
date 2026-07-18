@@ -21,9 +21,12 @@ data class HomeUiState(
      *  cosmetic and never gates anything. */
     val avatarUrl: String? = null,
     val continueListening: Song? = null,
-    val trending: List<Song> = emptyList(),
-    val newReleases: List<Song> = emptyList(),
+    /** All browse rows (Trending, New Releases, Made For You, ...) in the
+     *  order the API returns them — HomeScreen renders each as its own
+     *  row, so adding a section server-side needs no client change. */
+    val sections: List<Pair<String, List<Song>>> = emptyList(),
     val recentlyPlayed: List<Song> = emptyList(),
+    val likedSongs: List<Song> = emptyList(),
     val isPremium: Boolean = false,
     /** Non-null while the OTHER device (mobile) is actively playing
      *  something TV isn't currently playing — drives the
@@ -52,30 +55,24 @@ class HomeViewModel : ViewModel() {
 
             // Uses the same homeSections() the phone app's home screen is
             // built from — same Worker call, same content, not a
-            // reinvented query.
+            // reinvented query. Rendered generically by HomeScreen so
+            // adding a row server-side needs no client change.
             val sections = runCatching { AurumApi.homeSections() }.getOrDefault(emptyList())
-            val trending = sections.firstOrNull { it.first.contains("Trend", ignoreCase = true) }?.second
-                ?: sections.getOrNull(0)?.second ?: emptyList()
-            val newReleases = sections.firstOrNull { it.first.contains("New", ignoreCase = true) }?.second
-                ?: sections.getOrNull(1)?.second ?: emptyList()
 
             val playbackState = SyncRepository.fetchPlaybackState()
             val continueListening = playbackState?.songData?.toSong()
 
-            val recent = runCatching {
-                // recently_played rows -> songs; kept simple, TV shows at
-                // most what's already cached server-side.
-                emptyList<Song>() // populated via a dedicated fetch below if needed
-            }.getOrDefault(emptyList())
+            val recent = runCatching { SyncRepository.fetchRecentlyPlayed() }.getOrDefault(emptyList())
+            val liked = runCatching { SyncRepository.fetchLikedSongs() }.getOrDefault(emptyList())
 
             val isPremium = SyncRepository.fetchIsPremium()
 
             _uiState.value = _uiState.value.copy(
                 isLoading = false,
-                trending = trending,
-                newReleases = newReleases,
+                sections = sections,
                 continueListening = continueListening,
                 recentlyPlayed = recent,
+                likedSongs = liked,
                 isPremium = isPremium,
             )
         }
