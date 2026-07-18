@@ -160,7 +160,7 @@ private fun ProfileAvatar(avatarUrl: String?, onClick: () -> Unit) {
             )
         } else {
             androidx.tv.material3.Icon(
-                imageVector = androidx.compose.material.icons.Icons.Filled.Person,
+                imageVector = androidx.compose.material.icons.Icons.Filled.AccountCircle,
                 contentDescription = "Profile",
                 tint = AurumColors.TextSecondary,
                 modifier = Modifier.size(24.dp),
