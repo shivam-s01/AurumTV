@@ -1,5 +1,7 @@
 package com.aurum.musictv.ui.home
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -19,11 +21,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -49,10 +56,13 @@ fun HomeScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
 
-    // Hero spotlights the first song of the first non-empty section (or
-    // Continue Listening if present) — mirrors Spotify TV's "big banner
-    // up top, rows below" layout without a separate curated-hero API.
-    val heroSong = state.continueListening ?: state.sections.firstOrNull()?.second?.firstOrNull()
+    // Hero carousel spans multiple categories (see HomeViewModel.heroSongs);
+    // Continue Listening still takes priority as the very first frame so a
+    // returning listener sees their in-progress song immediately, before
+    // the carousel takes over.
+    val heroSongs = remember(state.continueListening, state.heroSongs) {
+        listOfNotNull(state.continueListening) + state.heroSongs.filter { it != state.continueListening }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().background(AurumColors.AmoledBg),
@@ -61,13 +71,13 @@ fun HomeScreen(
     ) {
         item {
             Box {
-                heroSong?.let {
-                    HeroBanner(
-                        song = it,
-                        onPlayClick = {
+                if (heroSongs.isNotEmpty()) {
+                    HeroCarousel(
+                        songs = heroSongs,
+                        onPlayClick = { song ->
                             val list = state.continueListening?.let { c -> listOf(c) }
-                                ?: state.sections.firstOrNull()?.second ?: listOf(it)
-                            onSongClick(it, list)
+                                ?: state.sections.firstOrNull()?.second ?: listOf(song)
+                            onSongClick(song, list)
                         },
                     )
                 }
@@ -135,13 +145,38 @@ fun HomeScreen(
 }
 
 /**
- * Full-bleed hero at the top of Home — large backdrop art with a
- * gradient scrim for text legibility, title, and a Play button. This is
- * what makes the landing page feel like a premium streaming service
- * instead of a plain grid of rows.
+ * Auto-rotating hero carousel — cycles through [songs] every 6s with a
+ * smooth crossfade (via animateFloatAsState, the same proven pattern
+ * SongCard already uses for its focus-scale animation — no new animation
+ * API surface introduced). Advances on its own; the user never has to
+ * interact with it, matching the "smooth automatic swipe" behavior asked
+ * for.
  */
 @Composable
-private fun HeroBanner(song: Song, onPlayClick: () -> Unit) {
+private fun HeroCarousel(songs: List<Song>, onPlayClick: (Song) -> Unit) {
+    var currentIndex by remember(songs) { mutableStateOf(0) }
+
+    LaunchedEffect(songs) {
+        if (songs.size <= 1) return@LaunchedEffect
+        while (true) {
+            kotlinx.coroutines.delay(6000)
+            currentIndex = (currentIndex + 1) % songs.size
+        }
+    }
+
+    val song = songs.getOrNull(currentIndex) ?: return
+
+    // Crossfade: alpha resets to 0 whenever currentIndex changes (key =
+    // currentIndex below), then animates up to 1 over 600ms — a real
+    // fade-in on every slide change, not a no-op animation to a constant.
+    var alphaTarget by remember(currentIndex) { mutableStateOf(0f) }
+    LaunchedEffect(currentIndex) { alphaTarget = 1f }
+    val alpha by animateFloatAsState(
+        targetValue = alphaTarget,
+        animationSpec = tween(durationMillis = 600),
+        label = "heroCrossfade",
+    )
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -150,7 +185,7 @@ private fun HeroBanner(song: Song, onPlayClick: () -> Unit) {
         coil.compose.AsyncImage(
             model = song.albumArtUrl,
             contentDescription = null,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha },
             contentScale = androidx.compose.ui.layout.ContentScale.Crop,
         )
         Box(
@@ -197,7 +232,7 @@ private fun HeroBanner(song: Song, onPlayClick: () -> Unit) {
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
                     .background(AurumColors.Gold)
-                    .clickable(onClick = onPlayClick)
+                    .clickable(onClick = { onPlayClick(song) })
                     .padding(horizontal = 32.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -209,6 +244,24 @@ private fun HeroBanner(song: Song, onPlayClick: () -> Unit) {
                     modifier = Modifier.size(22.dp),
                 )
                 Text("Play", color = AurumColors.AmoledBg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            }
+            if (songs.size > 1) {
+                Row(
+                    modifier = Modifier.padding(top = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    songs.forEachIndexed { i, _ ->
+                        Box(
+                            modifier = Modifier
+                                .size(if (i == currentIndex) 20.dp else 6.dp, 6.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(
+                                    if (i == currentIndex) AurumColors.Gold
+                                    else AurumColors.TextMuted,
+                                ),
+                        )
+                    }
+                }
             }
         }
     }

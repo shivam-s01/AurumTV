@@ -120,8 +120,13 @@ class PlayerManager(private val context: Context) {
         val song = queue.getOrNull(index) ?: return
         _uiState.value = _uiState.value.copy(currentSong = song, currentIndex = index)
 
-        val c = controller ?: return
         scope.launch {
+            // MediaController connects asynchronously (see init{}) — if the
+            // user taps a song from Search (or right after app launch)
+            // before that connection lands, `controller` is still null and
+            // this used to silently no-op with nothing playing and no
+            // error. Wait briefly for it instead of bailing immediately.
+            val c = awaitController() ?: return@launch
             val streamUrl = song.streamUrl ?: AurumApi.resolveStreamUrl(song)
             if (streamUrl == null) return@launch
             c.setMediaItem(MediaItem.fromUri(streamUrl))
@@ -129,6 +134,19 @@ class PlayerManager(private val context: Context) {
             c.play()
             SyncRepository.logRecentlyPlayed(song)
         }
+    }
+
+    /** Waits up to ~3s for the MediaController to finish connecting
+     *  (typically instant, but never guaranteed by the time the first
+     *  song click can happen). Returns null if it still isn't ready —
+     *  callers should treat that as "can't play right now" rather than
+     *  retrying forever. */
+    private suspend fun awaitController(): MediaController? {
+        repeat(30) {
+            controller?.let { return it }
+            delay(100)
+        }
+        return controller
     }
 
     fun togglePlayPause() {

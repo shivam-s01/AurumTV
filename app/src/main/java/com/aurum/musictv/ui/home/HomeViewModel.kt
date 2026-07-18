@@ -21,6 +21,11 @@ data class HomeUiState(
      *  cosmetic and never gates anything. */
     val avatarUrl: String? = null,
     val continueListening: Song? = null,
+    /** Songs shown in the auto-rotating hero carousel at the top of Home
+     *  — one random pick per section (so it spans categories, not just
+     *  one row) rather than always the same fixed song. Recomputed each
+     *  [HomeViewModel.loadHome] call, not on every recomposition. */
+    val heroSongs: List<Song> = emptyList(),
     /** All browse rows (Trending, New Releases, Made For You, ...) in the
      *  order the API returns them — HomeScreen renders each as its own
      *  row, so adding a section server-side needs no client change. */
@@ -59,6 +64,14 @@ class HomeViewModel : ViewModel() {
             // adding a row server-side needs no client change.
             val sections = runCatching { AurumApi.homeSections() }.getOrDefault(emptyList())
 
+            // One random song per section -> the hero carousel spans
+            // different categories each time Home loads, instead of
+            // always showing the same first song from the first row.
+            val heroSongs = sections
+                .mapNotNull { (_, songs) -> songs.randomOrNull() }
+                .shuffled()
+                .take(6)
+
             val playbackState = SyncRepository.fetchPlaybackState()
             val continueListening = playbackState?.songData?.toSong()
 
@@ -70,6 +83,7 @@ class HomeViewModel : ViewModel() {
             _uiState.value = _uiState.value.copy(
                 isLoading = false,
                 sections = sections,
+                heroSongs = heroSongs,
                 continueListening = continueListening,
                 recentlyPlayed = recent,
                 likedSongs = liked,
