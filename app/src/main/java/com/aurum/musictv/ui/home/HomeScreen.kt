@@ -228,22 +228,35 @@ private fun HeroCarousel(songs: List<Song>, onPlayClick: (Song) -> Unit) {
                 fontSize = 18.sp,
                 modifier = Modifier.padding(top = 4.dp, bottom = 20.dp),
             )
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(AurumColors.Gold)
-                    .clickable(onClick = { onPlayClick(song) })
-                    .padding(horizontal = 32.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            androidx.tv.material3.Surface(
+                onClick = { onPlayClick(song) },
+                shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(
+                    shape = RoundedCornerShape(8.dp),
+                ),
+                colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
+                    containerColor = AurumColors.Gold,
+                    focusedContainerColor = AurumColors.GoldLight,
+                ),
+                border = androidx.tv.material3.ClickableSurfaceDefaults.border(
+                    focusedBorder = androidx.tv.material3.Border(
+                        border = androidx.compose.foundation.BorderStroke(2.dp, AurumColors.TextPrimary),
+                        shape = RoundedCornerShape(8.dp),
+                    ),
+                ),
             ) {
-                androidx.tv.material3.Icon(
-                    imageVector = Icons.Filled.PlayArrow,
-                    contentDescription = null,
-                    tint = AurumColors.AmoledBg,
-                    modifier = Modifier.size(22.dp),
-                )
-                Text("Play", color = AurumColors.AmoledBg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Row(
+                    modifier = Modifier.padding(horizontal = 32.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    androidx.tv.material3.Icon(
+                        imageVector = Icons.Filled.PlayArrow,
+                        contentDescription = null,
+                        tint = AurumColors.AmoledBg,
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Text("Play", color = AurumColors.AmoledBg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                }
             }
             if (songs.size > 1) {
                 Row(
@@ -290,14 +303,28 @@ private fun TopBar(
             verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(AurumColors.AmoledBgSurface)
-                    .clickable(onClick = onSearchClick)
-                    .padding(horizontal = 20.dp, vertical = 10.dp),
+            androidx.tv.material3.Surface(
+                onClick = onSearchClick,
+                shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(
+                    shape = RoundedCornerShape(6.dp),
+                ),
+                colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
+                    containerColor = AurumColors.AmoledBgSurface,
+                    focusedContainerColor = AurumColors.AmoledBgElevated,
+                ),
+                border = androidx.tv.material3.ClickableSurfaceDefaults.border(
+                    focusedBorder = androidx.tv.material3.Border(
+                        border = androidx.compose.foundation.BorderStroke(2.dp, AurumColors.Gold),
+                        shape = RoundedCornerShape(6.dp),
+                    ),
+                ),
             ) {
-                Text("Search", color = AurumColors.TextPrimary, fontSize = 14.sp)
+                Text(
+                    "Search",
+                    color = AurumColors.TextPrimary,
+                    fontSize = 14.sp,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                )
             }
             ProfileAvatar(avatarUrl = avatarUrl, onClick = onProfileClick)
         }
@@ -312,14 +339,27 @@ private fun TopBar(
  */
 @Composable
 private fun ProfileAvatar(avatarUrl: String?, onClick: () -> Unit) {
-    androidx.compose.foundation.layout.Box(
-        modifier = Modifier
-            .size(40.dp)
-            .clip(androidx.compose.foundation.shape.CircleShape)
-            .background(AurumColors.AmoledBgSurface)
-            .clickable(onClick = onClick),
-        contentAlignment = androidx.compose.ui.Alignment.Center,
+    androidx.tv.material3.Surface(
+        onClick = onClick,
+        shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(
+            shape = androidx.compose.foundation.shape.CircleShape,
+        ),
+        colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
+            containerColor = AurumColors.AmoledBgSurface,
+            focusedContainerColor = AurumColors.AmoledBgElevated,
+        ),
+        border = androidx.tv.material3.ClickableSurfaceDefaults.border(
+            focusedBorder = androidx.tv.material3.Border(
+                border = androidx.compose.foundation.BorderStroke(2.dp, AurumColors.Gold),
+                shape = androidx.compose.foundation.shape.CircleShape,
+            ),
+        ),
+        modifier = Modifier.size(40.dp),
     ) {
+        androidx.compose.foundation.layout.Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = androidx.compose.ui.Alignment.Center,
+        ) {
         if (avatarUrl != null) {
             coil.compose.AsyncImage(
                 model = avatarUrl,
@@ -333,6 +373,7 @@ private fun ProfileAvatar(avatarUrl: String?, onClick: () -> Unit) {
                 color = AurumColors.TextSecondary,
                 modifier = Modifier,
             )
+        }
         }
     }
 }
@@ -350,13 +391,28 @@ private fun ResumeOnTvBanner(title: String, onDismiss: () -> Unit) {
             color = AurumColors.Gold,
             fontSize = 16.sp,
         )
-        Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .clickable(onClick = onDismiss)
-                .padding(horizontal = 12.dp, vertical = 6.dp),
+        androidx.tv.material3.Surface(
+            onClick = onDismiss,
+            shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(
+                shape = RoundedCornerShape(6.dp),
+            ),
+            colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
+                containerColor = AurumColors.AmoledBgSurface,
+                focusedContainerColor = AurumColors.AmoledBgElevated,
+            ),
+            border = androidx.tv.material3.ClickableSurfaceDefaults.border(
+                focusedBorder = androidx.tv.material3.Border(
+                    border = androidx.compose.foundation.BorderStroke(2.dp, AurumColors.Gold),
+                    shape = RoundedCornerShape(6.dp),
+                ),
+            ),
         ) {
-            Text("Dismiss", color = AurumColors.TextSecondary, fontSize = 13.sp)
+            Text(
+                "Dismiss",
+                color = AurumColors.TextSecondary,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            )
         }
     }
 }
