@@ -47,12 +47,17 @@ fun SearchScreen(
     val state by viewModel.uiState.collectAsState()
     var query by remember { mutableStateOf("") }
 
-    // Debounced search -- waits 400ms after the user stops typing on the
-    // TV's on-screen keyboard before firing a network call, so every
-    // keystroke doesn't trigger a Worker request.
+    // Live search: 300ms after the user stops typing (tight enough to
+    // feel instant, loose enough that a TV remote/on-screen-keyboard
+    // typing burst doesn't fire a network call per keystroke). Clearing
+    // the box drops results immediately instead of waiting on a debounce
+    // that's about to be cancelled anyway.
     LaunchedEffect(query) {
-        if (query.length < 2) return@LaunchedEffect
-        delay(400)
+        if (query.isEmpty()) {
+            viewModel.clear()
+            return@LaunchedEffect
+        }
+        delay(300)
         viewModel.search(query)
     }
 
@@ -76,7 +81,9 @@ fun SearchScreen(
         )
 
         Column(modifier = Modifier.padding(top = 24.dp)) {
-            if (state.results.isEmpty() && !state.isLoading && query.isNotEmpty()) {
+            if (state.isLoading) {
+                Text("Searching…", color = AurumColors.Gold, fontSize = 14.sp)
+            } else if (state.results.isEmpty() && query.isNotEmpty()) {
                 Text("No results", color = AurumColors.TextSecondary)
             }
 
