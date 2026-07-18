@@ -159,11 +159,10 @@ private fun ProfileAvatar(avatarUrl: String?, onClick: () -> Unit) {
                 contentScale = androidx.compose.ui.layout.ContentScale.Crop,
             )
         } else {
-            androidx.tv.material3.Icon(
-                imageVector = androidx.compose.material.icons.Icons.Filled.AccountCircle,
-                contentDescription = "Profile",
-                tint = AurumColors.TextSecondary,
-                modifier = Modifier.size(24.dp),
+            androidx.tv.material3.Text(
+                text = "\uD83D\uDC64",
+                color = AurumColors.TextSecondary,
+                modifier = Modifier,
             )
         }
     }
