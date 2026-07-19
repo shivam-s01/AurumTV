@@ -26,6 +26,15 @@ object AurumApi {
     // Same Worker URL as the phone app (lib/services/api_service.dart:209).
     private const val WORKER = "https://aurum-worker.shivamsharma962122.workers.dev"
 
+    // FIX (2026-07-19): The phone app's real Saavn source as of the
+    // 2026-07-17 update (api_service.dart) is jiosaavn-op v2 — its
+    // /api/songs/:id route returns clean, non-DRM direct .mp4 downloadUrl
+    // entries. The Worker's /api/songs route (previously the only thing
+    // this file called for SAAVN) is the phone app's LAST-resort fallback,
+    // not the primary — using it as the only source here is why Saavn
+    // songs were failing/stalling on TV far more than on phone.
+    private const val SAAVN_V2 = "https://jiosaavn-op-c4oo.onrender.com"
+
     /** Last raw diagnostic captured from a search() call — surfaced by
      *  HomeBrowseFragment's Toast so on-device failures are debuggable
      *  without logcat access. Not thread-safe by design; this is a
@@ -90,11 +99,27 @@ object AurumApi {
             maxAttempts = 3,
             isSuccess = { it: List<Song> -> it.isNotEmpty() },
         ) {
-            // Worker's real route is /result/?query=&limit= (see
-            // aurum-worker src/index.js router) — NOT /api/search/songs,
-            // which 404s.
-            val results = getJsonArrayOrObjectData("$WORKER/result/?query=$encoded&limit=$limit")
-            val ranked = rankByRelevance(parseSongs(results), query)
+            // FIX (2026-07-19): jiosaavn-op v2 is the phone app's real
+            // primary search source as of 2026-07-17 (api_service.dart:
+            // _searchSaavn stage 0) — its /api/search/songs route is
+            // confirmed reliable. The Worker's /result/ route (previously
+            // the only thing called here) is the phone app's last-resort
+            // pillar, kept below as a fallback for when v2 has downtime.
+            val v2Results = runCatching {
+                val v2Json = getJson("$SAAVN_V2/api/search/songs?query=$encoded&limit=$limit")
+                val v2Data = v2Json?.optJSONObject("data")?.optJSONArray("results")
+                if (v2Data != null && v2Data.length() > 0) parseSongs(v2Data) else null
+            }.getOrNull()
+
+            val results = if (!v2Results.isNullOrEmpty()) {
+                v2Results
+            } else {
+                // Worker's real route is /result/?query=&limit= (see
+                // aurum-worker src/index.js router) — NOT /api/search/songs,
+                // which 404s.
+                parseSongs(getJsonArrayOrObjectData("$WORKER/result/?query=$encoded&limit=$limit"))
+            }
+            val ranked = rankByRelevance(results, query)
             // Drop obvious non-song uploads (full movies, jukeboxes,
             // reaction videos etc. — see isLikelySong) before ranking is
             // final. Fails open: if filtering would wipe out the whole
@@ -409,13 +434,95 @@ object AurumApi {
                 streamJson?.optString("url")?.takeIf { it.isNotBlank() }
             }
         }
-        SongSource.SAAVN -> {
-            val json = getJson("$WORKER/api/songs?ids=${song.id}")
-            val data = json?.optJSONArray("data")?.optJSONObject(0)
-            data?.optString("downloadUrl")?.takeIf { it.isNotBlank() }
-                ?: song.streamUrl
-        }
+        SongSource.SAAVN -> resolveSaavnStreamUrl(song) ?: song.streamUrl
         SongSource.LOCAL -> song.streamUrl
+    }
+
+    /**
+     * FIX (2026-07-19): Ported from the phone app's _saavnStreamById +
+     * _extractSaavnStreamUrl + _proxiedSaavnUrl (api_service.dart). Two
+     * bugs in the old TV-only version this replaces:
+     *
+     *   1. It only ever called the Worker's /api/songs route, which the
+     *      phone app treats as a last-resort fallback, not the primary —
+     *      the real primary (jiosaavn-op v2) wasn't wired in at all.
+     *   2. It read `downloadUrl` as a single string
+     *      (`data?.optString("downloadUrl")`), but the real API shape is
+     *      an ARRAY of {quality, url} objects — optString on a JSONArray
+     *      silently returns "", so this was failing on every real
+     *      response shape and falling straight to YouTube every time.
+     *
+     * On top of that, raw saavncdn.com URLs are hotlink/referer-protected
+     * and won't play directly — they must be wrapped through the
+     * Worker's /stream-proxy route first (same as the phone app), or
+     * ExoPlayer just gets a silent connection failure/stall with no clue
+     * why.
+     */
+    private suspend fun resolveSaavnStreamUrl(song: Song): String? {
+        // 1. jiosaavn-op v2 — direct id lookup, matches phone app's primary path.
+        val v2Url = getJson("$SAAVN_V2/api/songs/${song.id}")
+        if (v2Url != null && v2Url.optBoolean("success", false)) {
+            val data = v2Url.opt("data")
+            val songData = when (data) {
+                is JSONArray -> data.optJSONObject(0)
+                is JSONObject -> data
+                else -> null
+            }
+            val extracted = songData?.let { extractSaavnDownloadUrl(it) }
+            if (!extracted.isNullOrBlank()) return extracted
+        }
+
+        // 2. Worker fallback (last-resort, matches phone app's tertiary pillar).
+        val json = getJson("$WORKER/api/songs?ids=${song.id}")
+        val data = json?.optJSONArray("data")?.optJSONObject(0)
+        return data?.let { extractSaavnDownloadUrl(it) }
+    }
+
+    /** Reads the real downloadUrl shape — an array of {quality, url}
+     *  objects, not a plain string — and picks the best available
+     *  quality, falling back to the last (usually highest-quality) entry
+     *  if none of the preferred qualities are present. Every returned
+     *  URL is proxy-wrapped if it's a saavncdn.com link. */
+    private fun extractSaavnDownloadUrl(song: JSONObject): String? {
+        val downloads = song.optJSONArray("downloadUrl")
+        if (downloads != null && downloads.length() > 0) {
+            // Prefer highest quality available; 320kbps > 160kbps > 96kbps > 48kbps.
+            val qualityOrder = listOf("320kbps", "160kbps", "96kbps", "48kbps")
+            for (q in qualityOrder) {
+                for (i in 0 until downloads.length()) {
+                    val d = downloads.optJSONObject(i) ?: continue
+                    if (d.optString("quality") == q) {
+                        val url = d.optString("url")
+                        if (url.startsWith("http")) return proxiedSaavnUrl(url)
+                    }
+                }
+            }
+            // No preferred quality matched — last entry is usually highest bitrate.
+            val last = downloads.optJSONObject(downloads.length() - 1)
+            val lastUrl = last?.optString("url")
+            if (!lastUrl.isNullOrBlank() && lastUrl.startsWith("http")) {
+                return proxiedSaavnUrl(lastUrl)
+            }
+        }
+        val direct = song.optString("media_url").ifBlank { song.optString("streamUrl") }
+        if (direct.isNotBlank() && direct.startsWith("http")) return proxiedSaavnUrl(direct)
+        return null
+    }
+
+    /** Matches the phone app's _proxiedSaavnUrl: saavncdn.com links are
+     *  hotlink/referer-protected and must go through the Worker's
+     *  stream-proxy route to actually play. Non-Saavn-CDN URLs (already
+     *  proxied, or from a different host) pass through unchanged. */
+    private fun proxiedSaavnUrl(url: String): String {
+        val decoded = java.net.URLDecoder.decode(url, "UTF-8")
+        if (decoded.contains("/stream-proxy?url=") || url.contains("/stream-proxy?url=")) {
+            return decoded
+        }
+        if (decoded.contains("saavncdn.com") || url.contains("saavncdn.com")) {
+            val encoded = java.net.URLEncoder.encode(decoded, "UTF-8")
+            return "$WORKER/stream-proxy?url=$encoded"
+        }
+        return decoded
     }
 
     /** Worker's search endpoint is Saavn-first; for the fallback chain we
