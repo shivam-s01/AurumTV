@@ -48,8 +48,8 @@ object AurumApi {
     // own semaphore already caps parallel search calls at 3) while still
     // letting a stream resolve overlap a search without queuing.
     private val client = OkHttpClient.Builder()
-        .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(6, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .connectionPool(okhttp3.ConnectionPool(4, 60, TimeUnit.SECONDS))
         .dispatcher(
@@ -381,38 +381,20 @@ object AurumApi {
         }
         if (!direct.isNullOrBlank()) return@withContext direct
 
-        // Direct source failed twice — fall back to YouTube search using
-        // title + artist, same as the phone app's fallback chain. This is
-        // what turns a dead Saavn link into a still-playable tap instead
-        // of a silent no-op.
-        lastDiagnostic = "Primary source failed for '${song.title}', falling back to YouTube"
+        // Direct source failed twice. The worker has no standalone
+        // YouTube-search route (only /api/yt-stream and /api/yt-proxy,
+        // both of which need a video ID up front) — so the only usable
+        // fallback is re-searching Saavn via /result/ for a different
+        // matching song/id and trying that instead. This is what turns a
+        // dead stream link into a still-playable tap instead of a silent
+        // no-op.
+        lastDiagnostic = "Primary source failed for '${song.title}', retrying via search"
         val fallbackQuery = "${song.title} ${song.artist}".trim()
-        val ytResults = runCatching { searchYoutubeFallback(fallbackQuery) }.getOrNull()
-        val ytSong = ytResults?.firstOrNull() ?: return@withContext null
-        resolveDirect(ytSong.copy(source = SongSource.YOUTUBE))
-    }
-
-    /** Picks the best-quality playable URL out of Saavn's downloadUrl
-     *  array: [{"quality": "320kbps", "url": "https://..."}, ...]. Walks
-     *  quality tiers highest-first; if none of the named qualities are
-     *  present (some responses only ship one entry with an odd/missing
-     *  quality label), falls back to the last entry in the array, which
-     *  is conventionally the highest bitrate Saavn provides. */
-    private fun extractBestSaavnUrl(downloads: JSONArray?): String? {
-        if (downloads == null || downloads.length() == 0) return null
-        val qualityOrder = listOf("320kbps", "160kbps", "96kbps", "48kbps", "12kbps")
-        for (q in qualityOrder) {
-            for (i in 0 until downloads.length()) {
-                val d = downloads.optJSONObject(i) ?: continue
-                if (d.optString("quality") == q) {
-                    val url = d.optString("url")
-                    if (url.startsWith("http")) return url
-                }
-            }
-        }
-        val last = downloads.optJSONObject(downloads.length() - 1)
-        val lastUrl = last?.optString("url")
-        return lastUrl?.takeIf { it.startsWith("http") }
+        val fallbackResults = runCatching { search(fallbackQuery, limit = 5) }.getOrNull()
+        val fallbackSong = fallbackResults
+            ?.firstOrNull { it.id != song.id }
+            ?: return@withContext null
+        resolveDirect(fallbackSong)
     }
 
     private suspend fun resolveDirect(song: Song): String? = when (song.source) {
@@ -433,54 +415,14 @@ object AurumApi {
             }
         }
         SongSource.SAAVN -> {
-            val json = getJson("$WORKER/api/songs?ids=${song.id}")
-            val data = json?.optJSONArray("data")?.optJSONObject(0)
-            // downloadUrl is an array of {quality, url} objects (Saavn.dev /
-            // jiosaavn-op style API), NOT a plain string — same shape the
-            // phone app parses in api_service.dart's _extractSaavnStreamUrl.
-            // Reading it with optString() (the old code here) silently
-            // returns blank for a JSONArray, so every Saavn song failed to
-            // resolve and the queue auto-skipped through songs one after
-            // another until it gave up with "check your connection".
-            // Prefer highest quality available, walking down; fall back to
-            // the last entry in the array if none of the named qualities
-            // match (some responses only ever include one entry).
-            val downloads = data?.optJSONArray("downloadUrl")
-            val fromArray = extractBestSaavnUrl(downloads)
-            fromArray
-                ?: data?.optString("media_url")?.takeIf { it.isNotBlank() }
-                ?: data?.optString("downloadUrl")?.takeIf { it.startsWith("http") } // legacy: some responses do send a plain string
+            // Worker's real route is /song/?id= returning {success, url,
+            // quality, source} directly — NOT /api/songs?ids= (which
+            // 404s) and NOT a data[0].downloadUrl array shape.
+            val json = getJson("$WORKER/song/?id=${song.id}")
+            json?.optString("url")?.takeIf { it.isNotBlank() }
                 ?: song.streamUrl
         }
         SongSource.LOCAL -> song.streamUrl
-    }
-
-    /** Worker's search endpoint is Saavn-first; for the fallback chain we
-     *  need actual YouTube results, so this hits the Worker's YouTube
-     *  search route directly instead of reusing search() (which is
-     *  Saavn-shaped parsing). Empty on any failure — this is itself the
-     *  last-resort path, there's no further fallback beyond it. */
-    private suspend fun searchYoutubeFallback(query: String, limit: Int = 3): List<Song> {
-        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val json = getJson("$WORKER/api/yt-search?query=$encoded&limit=$limit") ?: return emptyList()
-        val arr = json.optJSONArray("data") ?: json.optJSONArray("results") ?: return emptyList()
-        val out = mutableListOf<Song>()
-        for (i in 0 until arr.length()) {
-            val o = arr.optJSONObject(i) ?: continue
-            val id = o.optString("id").ifBlank { o.optString("videoId") }
-            if (id.isBlank()) continue
-            out.add(
-                Song(
-                    id = id,
-                    title = o.optString("title", query),
-                    artist = o.optString("artist").ifBlank { o.optString("channel", "Unknown Artist") },
-                    albumArtUrl = o.optString("thumbnail").ifBlank { null },
-                    durationSec = o.optInt("duration", 0),
-                    source = SongSource.YOUTUBE,
-                )
-            )
-        }
-        return out
     }
 
     data class PairingSession(val code: String, val confirmUrl: String, val expiresInSeconds: Int)
