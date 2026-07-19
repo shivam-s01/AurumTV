@@ -105,6 +105,14 @@ fun SearchScreen(
                 Text("Searching…", color = AurumColors.Gold, fontSize = 14.sp)
             } else if (state.results.isEmpty() && query.isNotEmpty()) {
                 Text("No results", color = AurumColors.TextSecondary)
+                // FIX: previously any failure (dead Worker, timeout, DNS)
+                // rendered identically to a genuine "no matches" — same
+                // silent-swallow bug as Home. Now shows the actual reason
+                // underneath so it's obvious this is a connectivity/server
+                // problem, not just an obscure query.
+                state.loadError?.let { err ->
+                    Text(err, color = AurumColors.TextSecondary, fontSize = 12.sp)
+                }
             }
 
             LazyVerticalGrid(

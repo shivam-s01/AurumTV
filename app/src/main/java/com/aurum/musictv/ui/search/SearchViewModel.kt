@@ -13,6 +13,12 @@ import kotlinx.coroutines.launch
 data class SearchUiState(
     val isLoading: Boolean = false,
     val results: List<Song> = emptyList(),
+    /** Non-null when the last search finished with zero results AND the
+     *  call itself failed — same problem HomeViewModel had: without this,
+     *  a dead Worker/timeout and "no matches for this query" both just
+     *  render as an empty results list, indistinguishable from each
+     *  other. */
+    val loadError: String? = null,
 )
 
 class SearchViewModel : ViewModel() {
@@ -33,9 +39,15 @@ class SearchViewModel : ViewModel() {
         lastQuery = query
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true)
-            val results = runCatching { AurumApi.search(query) }.getOrDefault(emptyList())
-            _uiState.value = _uiState.value.copy(isLoading = false, results = results)
+            _uiState.value = _uiState.value.copy(isLoading = true, loadError = null)
+            val result = runCatching { AurumApi.search(query) }
+            val results = result.getOrDefault(emptyList())
+            val loadError = when {
+                result.isFailure -> "Couldn't reach server: ${result.exceptionOrNull()?.message ?: "unknown error"}"
+                results.isEmpty() -> AurumApi.lastDiagnostic.takeIf { it.isNotBlank() && !it.startsWith("OK") }
+                else -> null
+            }
+            _uiState.value = _uiState.value.copy(isLoading = false, results = results, loadError = loadError)
         }
     }
 

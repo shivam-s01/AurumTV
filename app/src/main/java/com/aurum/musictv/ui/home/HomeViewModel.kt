@@ -38,6 +38,12 @@ data class HomeUiState(
      *  something TV isn't currently playing — drives the
      *  "Playing on phone" resume banner. */
     val remoteNowPlaying: PlaybackStateRow? = null,
+    /** Non-null when a load finished with zero sections AND the Worker
+     *  call itself failed/errored (as opposed to genuinely returning no
+     *  results) — drives an explicit "couldn't load, retry" state on Home
+     *  instead of silently showing a blank screen forever. Cleared on the
+     *  next successful load. */
+    val loadError: String? = null,
 )
 
 class HomeViewModel : ViewModel() {
@@ -96,7 +102,23 @@ class HomeViewModel : ViewModel() {
             // built from — same Worker call, same content, not a
             // reinvented query. Rendered generically by HomeScreen so
             // adding a row server-side needs no client change.
-            val sections = runCatching { AurumApi.homeSections() }.getOrDefault(emptyList())
+            //
+            // FIX: previously this used getOrDefault(emptyList()) and threw
+            // away the actual exception — a dead Worker, DNS failure, or
+            // timeout looked exactly the same as "genuinely no results":
+            // a blank Home with no way to tell why. Now the failure reason
+            // (plus AurumApi.lastDiagnostic, which records the raw
+            // HTTP/exception detail from whichever section call failed) is
+            // kept and surfaced so Home can show a real error + retry
+            // instead of silently staying empty forever.
+            val sectionsResult = runCatching { AurumApi.homeSections() }
+            val sections = sectionsResult.getOrDefault(emptyList())
+            val loadError = when {
+                sectionsResult.isFailure ->
+                    "Couldn't reach server: ${sectionsResult.exceptionOrNull()?.message ?: "unknown error"}"
+                sections.isEmpty() -> "No songs loaded. ${AurumApi.lastDiagnostic}"
+                else -> null
+            }
 
             // One random song per section -> the hero carousel spans
             // different categories each time Home loads, instead of
@@ -122,6 +144,7 @@ class HomeViewModel : ViewModel() {
                 recentlyPlayed = recent,
                 likedSongs = liked,
                 isPremium = isPremium,
+                loadError = loadError,
             )
         }
     }

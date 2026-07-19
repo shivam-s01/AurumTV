@@ -155,6 +155,67 @@ fun HomeScreen(
                 onSongClick = { onSongClick(it, songs) },
             )
         }
+
+        // FIX: Home previously had no fallback UI when sections came back
+        // empty — the LazyColumn just rendered nothing below the top bar,
+        // which was indistinguishable from "still loading" or "stuck".
+        // Now: while loading, show a spinner; if loading finished with
+        // zero sections, show the actual reason (network/server) plus a
+        // Retry button instead of a permanently blank page.
+        if (state.isLoading && state.sections.isEmpty()) {
+            item {
+                Box(
+                    modifier = Modifier.fillMaxWidth().height(120.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("Loading songs…", color = AurumColors.TextSecondary, fontSize = 16.sp)
+                }
+            }
+        } else if (!state.isLoading && state.sections.isEmpty()) {
+            item {
+                HomeErrorState(message = state.loadError, onRetry = viewModel::refresh)
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeErrorState(message: String?, onRetry: () -> Unit) {
+    val retryFocusRequester = rememberClickFocusRequester()
+    val isTouch = isTouchDevice()
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 48.dp, vertical = 40.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            text = "Couldn't load songs",
+            color = AurumColors.TextPrimary,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = message ?: "Check your internet connection and try again.",
+            color = AurumColors.TextSecondary,
+            fontSize = 13.sp,
+        )
+        androidx.tv.material3.Surface(
+            onClick = onRetry,
+            modifier = Modifier.adaptiveClickable(retryFocusRequester, isTouch),
+            shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(6.dp)),
+            colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
+                containerColor = AurumColors.Gold,
+                focusedContainerColor = AurumColors.GoldLight,
+            ),
+        ) {
+            Text(
+                "Retry",
+                color = AurumColors.AmoledBg,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            )
+        }
     }
 }
 
