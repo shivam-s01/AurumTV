@@ -99,26 +99,27 @@ object AurumApi {
             maxAttempts = 3,
             isSuccess = { it: List<Song> -> it.isNotEmpty() },
         ) {
-            // FIX (2026-07-19): jiosaavn-op v2 is the phone app's real
-            // primary search source as of 2026-07-17 (api_service.dart:
-            // _searchSaavn stage 0) — its /api/search/songs route is
-            // confirmed reliable. The Worker's /result/ route (previously
-            // the only thing called here) is the phone app's last-resort
-            // pillar, kept below as a fallback for when v2 has downtime.
-            val v2Results = runCatching {
-                val v2Json = getJson("$SAAVN_V2/api/search/songs?query=$encoded&limit=$limit")
-                val v2Data = v2Json?.optJSONObject("data")?.optJSONArray("results")
-                if (v2Data != null && v2Data.length() > 0) parseSongs(v2Data) else null
-            }.getOrNull()
-
-            val results = if (!v2Results.isNullOrEmpty()) {
-                v2Results
-            } else {
-                // Worker's real route is /result/?query=&limit= (see
-                // aurum-worker src/index.js router) — NOT /api/search/songs,
-                // which 404s.
-                parseSongs(getJsonArrayOrObjectData("$WORKER/result/?query=$encoded&limit=$limit"))
-            }
+            // FIX (2026-07-19, corrected): An earlier version of this fix
+            // made jiosaavn-op v2 (a free-tier onrender.com instance) the
+            // FIRST thing tried on every search — including all 8 of
+            // Home's parallel row loads. Free-tier onrender instances
+            // spin down after inactivity and can take 30-50s to
+            // cold-start on the first hit; with 8 rows all paying that
+            // latency (semaphore-limited to 3 at a time), Home could take
+            // over a minute to show anything, and with no loading/error
+            // state wired up in HomeScreen.kt, that looked exactly like
+            // "home page is just empty."
+            //
+            // Reverted to the Worker as sole primary here — it's under
+            // our own control, already proven reliable, and its own
+            // OkHttp timeouts (6s connect / 10s read) cap the worst case
+            // per row. v2 is intentionally NOT wired into this hot path
+            // until its uptime/cold-start behavior is confirmed; it can
+            // be re-added as a genuine parallel race (not try-then-
+            // fallback) once that's verified, same as resolveSaavnStreamUrl
+            // keeps it as a secondary attempt for individual song taps
+            // (which only pay that cost once per tap, not 8x on Home).
+            val results = parseSongs(getJsonArrayOrObjectData("$WORKER/result/?query=$encoded&limit=$limit"))
             val ranked = rankByRelevance(results, query)
             // Drop obvious non-song uploads (full movies, jukeboxes,
             // reaction videos etc. — see isLikelySong) before ranking is
