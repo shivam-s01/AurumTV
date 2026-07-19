@@ -94,16 +94,16 @@ android {
         compose = true
     }
 
-    // Only ship the ABI most TV boxes use — cuts APK size a lot.
-    // arm64-v8a covers virtually all modern Android TV / Fire TV / Google TV
-    // hardware. Add armeabi-v7a back in only if you must support very old
-    // boxes (adds ~2-3MB).
+    // Ship a single universal APK covering all common TV ABIs
+    // (arm64-v8a, armeabi-v7a, x86, x86_64). Some Fire TV sticks and
+    // budget Android TV boxes are 32-bit ARM or x86, not arm64 — an
+    // arm64-only split APK silently fails to install ("app not
+    // installed" / no error at all) on those devices with zero signal
+    // as to why. Universal APK is a few MB bigger but installs
+    // everywhere; that's the right tradeoff for sideload distribution.
     splits {
         abi {
-            isEnable = true
-            reset()
-            include("arm64-v8a")
-            isUniversalApk = false
+            isEnable = false
         }
     }
 
