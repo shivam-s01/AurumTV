@@ -58,7 +58,7 @@ fun AuthScreen(onSignedIn: () -> Unit, onDismiss: () -> Unit) {
         verticalArrangement = Arrangement.Center,
     ) {
         Text(
-            text = "Aurum",
+            text = "Astra",
             color = AurumColors.Gold,
             fontSize = 48.sp,
             fontWeight = FontWeight.Bold,

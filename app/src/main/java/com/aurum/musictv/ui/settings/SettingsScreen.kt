@@ -169,7 +169,7 @@ fun SettingsScreen(
         item { SectionHeader("Account") }
         item {
             SettingsGroup {
-                InfoRow(label = "About", valueLabel = "Aurum TV v${state.appVersion}")
+                InfoRow(label = "About", valueLabel = "Astra TV v${state.appVersion}")
                 InfoRow(label = "Privacy", valueLabel = "How your data is used")
                 if (state.isSignedIn) {
                     ActionRow(

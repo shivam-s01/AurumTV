@@ -1,4 +1,4 @@
-name: Build Aurum TV APK
+name: Build Astra TV APK
 
 on:
   push:
@@ -55,7 +55,7 @@ jobs:
         run: |
           mkdir -p dist
           SRC=$(find app/build/outputs/apk -name "*-release.apk" | head -n 1)
-          OUT="dist/AurumTV-1.1.0-b${{ github.run_number }}.apk"
+          OUT="dist/AstraTV-1.1.0-b${{ github.run_number }}.apk"
           cp "$SRC" "$OUT"
           ls -lh dist
           echo "path=$OUT" >> $GITHUB_OUTPUT
@@ -63,7 +63,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: aurum-tv-apk
+          name: astra-tv-apk
           path: dist/*.apk
           if-no-files-found: error
 
@@ -82,7 +82,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: tv-build${{ github.run_number }}
-          name: Aurum TV ${{ github.run_number }}
+          name: Astra TV ${{ github.run_number }}
           body: ${{ github.event.head_commit.message }}
           files: ${{ steps.apk.outputs.path }}
           token: ${{ secrets.GITHUB_TOKEN }}

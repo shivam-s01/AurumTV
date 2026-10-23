@@ -363,7 +363,7 @@ private fun TopBar(
         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
     ) {
         Text(
-            text = if (greetingName != null) "Hi, $greetingName" else "Aurum",
+            text = if (greetingName != null) "Hi, $greetingName" else "Astra",
             color = AurumColors.TextPrimary,
             fontSize = 28.sp,
             fontWeight = FontWeight.Bold,
