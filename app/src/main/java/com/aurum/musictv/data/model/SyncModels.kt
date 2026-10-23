@@ -168,6 +168,7 @@ fun PlaylistRow.toPlaylistOrNull(): TvPlaylist? {
     val name = d.str("name") ?: return null
     val songs = (d["songs"] as? JsonArray)
         ?.mapNotNull { (it as? JsonObject)?.toSongOrNull() }
+        ?.distinctBy { it.id }
         .orEmpty()
     return TvPlaylist(
         id = id,

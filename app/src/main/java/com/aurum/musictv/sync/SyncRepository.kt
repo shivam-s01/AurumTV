@@ -57,7 +57,7 @@ object SyncRepository {
                 }
                 .decodeList<FavoriteRow>()
             likedIds = rows.map { it.songId }.toSet()
-            rows.asReversed().mapNotNull { it.data?.toSongOrNull(it.songId) }
+            rows.asReversed().mapNotNull { it.data?.toSongOrNull(it.songId) }.distinctBy { it.id }
         }.getOrDefault(emptyList())
     }
 
@@ -121,6 +121,7 @@ object SyncRepository {
                 }
                 .decodeList<HistoryRow>()
                 .mapNotNull { it.data?.toSongOrNull(it.songId) }
+                .distinctBy { it.id }
         }.getOrDefault(emptyList())
     }
 

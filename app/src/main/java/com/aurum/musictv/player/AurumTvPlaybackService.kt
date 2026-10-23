@@ -4,6 +4,8 @@ import android.app.PendingIntent
 import android.content.Intent
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -13,6 +15,13 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.aurum.musictv.MainActivity
+import com.aurum.musictv.settings.AppSettings
+import com.aurum.musictv.settings.SettingsStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 /**
  * TV equivalent of AurumMediaSessionService.kt / AurumAudioEngine.kt from
@@ -23,6 +32,18 @@ import com.aurum.musictv.MainActivity
 class AurumTvPlaybackService : MediaSessionService() {
 
     private var mediaSession: MediaSession? = null
+
+    // Live settings -> DSP. Settings changes (EQ, bass, volume boost, skip
+    // silence) are applied to the CURRENT song the instant they change.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val fx = AudioFx()
+    private var exo: ExoPlayer? = null
+    private var latest = AppSettings()
+
+    private fun syncFx() {
+        val p = exo ?: return
+        fx.apply(p.audioSessionId, latest)
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -77,6 +98,22 @@ class AurumTvPlaybackService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(true)
             .build()
 
+        exo = player
+        player.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) = syncFx()
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) = syncFx()
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (isPlaying) syncFx()
+            }
+        })
+        scope.launch {
+            SettingsStore.observe(applicationContext).collect { s ->
+                latest = s
+                player.setSkipSilenceEnabled(s.skipSilence)
+                syncFx()
+            }
+        }
+
         val sessionActivityIntent = Intent(this, MainActivity::class.java)
         val sessionActivityPendingIntent = PendingIntent.getActivity(
             this, 0, sessionActivityIntent,
@@ -92,6 +129,9 @@ class AurumTvPlaybackService : MediaSessionService() {
         mediaSession
 
     override fun onDestroy() {
+        scope.cancel()
+        fx.release()
+        exo = null
         mediaSession?.run {
             player.release()
             release()

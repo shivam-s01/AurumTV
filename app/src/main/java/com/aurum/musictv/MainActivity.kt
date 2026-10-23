@@ -6,7 +6,25 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.collectAsState
+import androidx.tv.material3.Text
+import com.aurum.musictv.settings.AppSettings
+import com.aurum.musictv.settings.SettingsStore
+import com.aurum.musictv.ui.player.NowPlayingBar
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -82,107 +100,146 @@ private fun Screen.toNavDestinationOrNull(): NavDestination? = when (this) {
 
 @Composable
 private fun AurumApp(playerManager: PlayerManager) {
-    // Login is optional — app always starts at Home so playback works
-    // without signing in. Auth is only ever reached via the profile icon
-    // in the top bar, same as Spotify TV: browsing/playback never
-    // requires an account.
-    var screen by remember { mutableStateOf<Screen>(Screen.Home) }
-    val homeViewModel: HomeViewModel = viewModel()
+    val context = LocalContext.current
 
-    // Home's two background polls (remote-playback banner, premium
-    // flag — see HomeViewModel/SyncRepository) only matter while Home is
-    // actually the screen on screen. HomeViewModel is retained for the
-    // whole Activity lifetime regardless of which screen is showing, so
-    // without this signal those polls would keep firing network calls
-    // every 8s/30s even while sitting on Player/Search/Library/Settings.
-    // This is a plain LaunchedEffect keyed on `screen`, not a new
-    // observer/listener system — zero added overhead of its own.
+    // Live settings (open-player-on-tap, reduce motion). Changes rarely, so
+    // collecting it here does not cause per-second recomposition.
+    val settings by remember { SettingsStore.observe(context.applicationContext) }
+        .collectAsState(initial = AppSettings())
+
+    // Login is optional — app always starts at Home so playback works
+    // without signing in.
+    var screen by remember { mutableStateOf<Screen>(Screen.Home) }
+    // Where the full player was opened from, so Back returns there.
+    var returnTo by remember { mutableStateOf<Screen>(Screen.Home) }
+    val homeViewModel: HomeViewModel = viewModel()
+    val homeListState = rememberLazyListState()
+
+    // Only the "is there a current song" bit is observed here — the full
+    // PlayerUiState ticks every second and must not recompose the whole app.
+    val hasSong by remember(playerManager) {
+        playerManager.uiState.map { it.currentSong != null }.distinctUntilChanged()
+    }.collectAsState(initial = false)
+
     LaunchedEffect(screen) {
         homeViewModel.setHomeVisible(screen is Screen.Home)
     }
 
-    // The persistent left rail (Home/Search/Library) is Spotify-TV's
-    // structure: a permanent nav rail sitting beside content, not a
-    // full-screen swap reached only through a top-bar icon. It's hidden
-    // for Player and Settings (see showSidebar below) — same as Spotify
-    // TV, where "now playing" and settings both go full-bleed and
-    // intentionally drop the rail to maximize their own content.
-    val showSidebar = screen is Screen.Home || screen is Screen.Search || screen is Screen.Library
-
-    // There was no BackHandler anywhere in the app — the remote's Back
-    // button did nothing on Player/Search/Library/Settings/Auth, so it
-    // either fell through to the OS (closing the app straight from
-    // "now playing", which is jarring) or was silently swallowed
-    // depending on the launcher. Every non-Home screen now returns to
-    // Home; from Home itself Back falls through to the system default
-    // (leaves the app), matching Spotify TV's remote behavior.
-    BackHandler(enabled = screen != Screen.Home) {
-        screen = Screen.Home
+    fun openPlayer() {
+        if (screen !is Screen.Player) {
+            returnTo = screen
+            screen = Screen.Player
+        }
     }
 
-    Row(modifier = Modifier.fillMaxSize().background(AurumColors.AmoledBg)) {
-        if (showSidebar) {
-            SidebarNav(
-                current = screen.toNavDestinationOrNull() ?: NavDestination.HOME,
-                onNavigate = { destination ->
-                    screen = when (destination) {
-                        NavDestination.HOME -> Screen.Home
-                        NavDestination.SEARCH -> Screen.Search
-                        NavDestination.LIBRARY -> Screen.Library
+    /** Spotify behavior: a tap starts playback and shows the mini player;
+     *  the full player opens only when asked (or if the setting is on). */
+    fun play(song: Song, queue: List<Song>) {
+        val startIndex = queue.indexOf(song).coerceAtLeast(0)
+        playerManager.playQueue(queue, startIndex)
+        if (settings.openPlayerOnTap) openPlayer()
+    }
+
+    val showSidebar = screen is Screen.Home || screen is Screen.Search || screen is Screen.Library
+    val showBar = hasSong && (showSidebar || screen is Screen.Settings)
+
+    // Back: player -> wherever it was opened from; everything else -> Home;
+    // Home -> system default (leaves the app, music keeps playing).
+    BackHandler(enabled = screen != Screen.Home) {
+        screen = if (screen is Screen.Player) returnTo else Screen.Home
+    }
+
+    Box(modifier = Modifier.fillMaxSize().background(AurumColors.AmoledBg)) {
+        Row(modifier = Modifier.fillMaxSize()) {
+            if (showSidebar) {
+                SidebarNav(
+                    current = screen.toNavDestinationOrNull() ?: NavDestination.HOME,
+                    onNavigate = { destination ->
+                        screen = when (destination) {
+                            NavDestination.HOME -> Screen.Home
+                            NavDestination.SEARCH -> Screen.Search
+                            NavDestination.LIBRARY -> Screen.Library
+                        }
+                    },
+                    showNowPlaying = hasSong,
+                    onNowPlaying = { openPlayer() },
+                )
+            }
+
+            Column(modifier = Modifier.fillMaxSize()) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    when (screen) {
+                        is Screen.Auth -> AuthScreen(
+                            onSignedIn = {
+                                homeViewModel.refreshAuthState()
+                                screen = Screen.Home
+                            },
+                            onDismiss = {
+                                homeViewModel.refreshAuthState()
+                                screen = Screen.Home
+                            },
+                        )
+
+                        is Screen.Home -> HomeScreen(
+                            viewModel = homeViewModel,
+                            onSongClick = { song, queue -> play(song, queue) },
+                            onSearchClick = { screen = Screen.Search },
+                            onProfileClick = { screen = Screen.Auth },
+                            onSettingsClick = { screen = Screen.Settings },
+                            listState = homeListState,
+                            reduceMotion = settings.reduceMotion,
+                        )
+
+                        is Screen.Search -> SearchScreen(
+                            onSongClick = { song, results -> play(song, results) },
+                        )
+
+                        is Screen.Library -> LibraryScreen(
+                            onSongClick = { song, results -> play(song, results) },
+                        )
+
+                        is Screen.Player -> PlayerScreen(playerManager = playerManager)
+
+                        is Screen.Settings -> SettingsScreen(onBack = { screen = Screen.Home })
                     }
-                },
-            )
+                }
+                if (showBar) {
+                    NowPlayingBar(
+                        playerManager = playerManager,
+                        onOpen = { openPlayer() },
+                    )
+                }
+            }
         }
 
+        PlaybackNoticeHost(playerManager)
+    }
+}
+
+/** App-wide toast for playback feedback (errors, auto-skip, quality swap) —
+ *  global so it shows on every screen, not only the full player. */
+@Composable
+private fun PlaybackNoticeHost(playerManager: PlayerManager) {
+    val message by remember(playerManager) {
+        playerManager.uiState.map { it.playbackError }.distinctUntilChanged()
+    }.collectAsState(initial = null)
+    val text = message ?: return
+
+    LaunchedEffect(text) {
+        delay(3000)
+        playerManager.dismissPlaybackError()
+    }
+    Box(
+        modifier = Modifier.fillMaxSize().padding(bottom = 96.dp),
+        contentAlignment = Alignment.BottomCenter,
+    ) {
         Box(
             modifier = Modifier
-                .fillMaxHeight()
-                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(AurumColors.AmoledBgElevated)
+                .padding(horizontal = 20.dp, vertical = 12.dp),
         ) {
-            when (screen) {
-                is Screen.Auth -> AuthScreen(
-                    onSignedIn = {
-                        homeViewModel.refreshAuthState()
-                        screen = Screen.Home
-                    },
-                    onDismiss = {
-                        homeViewModel.refreshAuthState()
-                        screen = Screen.Home
-                    },
-                )
-
-                is Screen.Home -> HomeScreen(
-                    viewModel = homeViewModel,
-                    onSongClick = { song, queue ->
-                        val startIndex = queue.indexOf(song).coerceAtLeast(0)
-                        playerManager.playQueue(queue, startIndex)
-                        screen = Screen.Player
-                    },
-                    onSearchClick = { screen = Screen.Search },
-                    onProfileClick = { screen = Screen.Auth },
-                    onSettingsClick = { screen = Screen.Settings },
-                )
-
-                is Screen.Search -> SearchScreen(
-                    onSongClick = { song, results ->
-                        val startIndex = results.indexOf(song).coerceAtLeast(0)
-                        playerManager.playQueue(results, startIndex)
-                        screen = Screen.Player
-                    },
-                )
-
-                is Screen.Library -> LibraryScreen(
-                    onSongClick = { song, results ->
-                        val startIndex = results.indexOf(song).coerceAtLeast(0)
-                        playerManager.playQueue(results, startIndex)
-                        screen = Screen.Player
-                    },
-                )
-
-                is Screen.Player -> PlayerScreen(playerManager = playerManager)
-
-                is Screen.Settings -> SettingsScreen(onBack = { screen = Screen.Home })
-            }
+            Text(text, color = AurumColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
         }
     }
 }

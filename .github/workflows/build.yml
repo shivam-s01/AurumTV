@@ -5,9 +5,18 @@ on:
     branches: [ main ]
   workflow_dispatch: {}
 
+# Needed so the "Create Release" step can publish a GitHub Release.
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+      STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,25 +33,38 @@ jobs:
       - name: Grant execute permission
         run: chmod +x gradlew
 
-      - name: Decode Keystore
-        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > aurum-release.jks
-
-      - name: Write key.properties
+      # Release signing. If the four secrets are set the APK is signed with
+      # the release keystore; if any is missing the build still succeeds
+      # (debug-signed) instead of failing on an empty keystore.
+      - name: Decode keystore + write key.properties
         run: |
-          printf 'storePassword=${{ secrets.STORE_PASSWORD }}\nkeyPassword=${{ secrets.KEY_PASSWORD }}\nkeyAlias=${{ secrets.KEY_ALIAS }}\nstoreFile=aurum-release.jks\n' > key.properties
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_PASSWORD" ] && [ -n "$KEY_ALIAS" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > aurum-release.jks
+            printf 'storePassword=%s\nkeyPassword=%s\nkeyAlias=%s\nstoreFile=aurum-release.jks\n' \
+              "$STORE_PASSWORD" "$KEY_PASSWORD" "$KEY_ALIAS" > key.properties
+            echo "Release keystore configured."
+          else
+            echo "::warning::Signing secrets missing - building with the debug key."
+          fi
 
       - name: Build release APK
         run: ./gradlew assembleRelease --stacktrace
 
-      - name: Show APK size
+      - name: Name the APK
+        id: apk
         run: |
-          find app/build/outputs/apk -name "*.apk" -exec ls -lh {} \;
+          mkdir -p dist
+          SRC=$(find app/build/outputs/apk -name "*-release.apk" | head -n 1)
+          OUT="dist/AurumTV-1.1.0-b${{ github.run_number }}.apk"
+          cp "$SRC" "$OUT"
+          ls -lh dist
+          echo "path=$OUT" >> $GITHUB_OUTPUT
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: aurum-tv-apk
-          path: app/build/outputs/apk/**/*-release.apk
+          path: dist/*.apk
           if-no-files-found: error
 
       - name: Check release opt-in
@@ -52,7 +74,7 @@ jobs:
             echo "should_release=true" >> $GITHUB_OUTPUT
           else
             echo "should_release=false" >> $GITHUB_OUTPUT
-            echo "Commit message doesn't contain [release] — build artifact is available above, no public release created."
+            echo "Commit message doesn't contain [release] - APK is in the artifacts, no public release created."
           fi
 
       - name: Create Release
@@ -60,6 +82,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: tv-build${{ github.run_number }}
-          name: TV Build ${{ github.run_number }}
-          files: app/build/outputs/apk/**/*-release.apk
+          name: Aurum TV ${{ github.run_number }}
+          body: ${{ github.event.head_commit.message }}
+          files: ${{ steps.apk.outputs.path }}
           token: ${{ secrets.GITHUB_TOKEN }}

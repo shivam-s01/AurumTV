@@ -12,46 +12,67 @@ import kotlinx.coroutines.flow.map
 
 private val Context.dataStore by preferencesDataStore(name = "aurum_tv_settings")
 
-/**
- * Streaming quality for YouTube audio. Maps onto real YouTube audio tiers
- * (see YoutubeStreamResolver):
- *   LOW    — Opus ~50 kbps  (data saver, fastest start on weak Wi-Fi)
- *   NORMAL — ~128 kbps
- *   HIGH   — best stream YouTube offers (~160 kbps+)
- */
+/** YouTube audio tier: LOW ~50 kbps, NORMAL ~128 kbps, HIGH best available. */
 enum class AudioQuality { LOW, NORMAL, HIGH }
+
+/** Equalizer presets (applied live through android.media.audiofx). */
+enum class EqPreset { FLAT, BASS, VOCAL, TREBLE, LOUD }
+
+/** Strength steps for Bass Boost / Volume Boost. */
+enum class FxLevel { OFF, LOW, MEDIUM, HIGH }
 
 data class AppSettings(
     val audioQuality: AudioQuality = AudioQuality.HIGH,
     val autoplay: Boolean = true,
+    /** false = tapping a song only plays it (mini player shows at the bottom,
+     *  Spotify-style); true = also jump to the full player. */
+    val openPlayerOnTap: Boolean = false,
+    val skipSilence: Boolean = false,
+    val eqPreset: EqPreset = EqPreset.FLAT,
+    val bassBoost: FxLevel = FxLevel.OFF,
+    val volumeBoost: FxLevel = FxLevel.OFF,
+    /** Stops the Home hero auto-rotation + fades (saves CPU on weak boxes). */
+    val reduceMotion: Boolean = false,
 )
 
 /**
- * Single source of truth for the Settings screen, backed by Jetpack
- * DataStore. Deliberately tiny: only settings that actually change what the
- * app does. The old Theme / Crossfade / Normalize Volume / Lossless options
- * were never wired to anything (and cost CPU/RAM on a TV box if they had
- * been), so they are gone.
+ * Single source of truth for Settings, backed by DataStore. Every value is a
+ * Flow, so the playback service (audio effects, skip-silence) and the
+ * PlayerManager (quality) react the moment a setting changes — no restart,
+ * no waiting for the next song.
  */
 object SettingsStore {
     private val KEY_AUDIO_QUALITY = stringPreferencesKey("audio_quality")
     private val KEY_AUTOPLAY = booleanPreferencesKey("autoplay")
+    private val KEY_OPEN_PLAYER = booleanPreferencesKey("open_player_on_tap")
+    private val KEY_SKIP_SILENCE = booleanPreferencesKey("skip_silence")
+    private val KEY_EQ = stringPreferencesKey("eq_preset")
+    private val KEY_BASS = stringPreferencesKey("bass_boost")
+    private val KEY_VOLUME = stringPreferencesKey("volume_boost")
+    private val KEY_REDUCE_MOTION = booleanPreferencesKey("reduce_motion")
 
     fun observe(context: Context): Flow<AppSettings> =
         context.dataStore.data.map { prefs ->
             AppSettings(
                 audioQuality = parseQuality(prefs[KEY_AUDIO_QUALITY]),
                 autoplay = prefs[KEY_AUTOPLAY] ?: true,
+                openPlayerOnTap = prefs[KEY_OPEN_PLAYER] ?: false,
+                skipSilence = prefs[KEY_SKIP_SILENCE] ?: false,
+                eqPreset = parseEnum(prefs[KEY_EQ], EqPreset.FLAT),
+                bassBoost = parseEnum(prefs[KEY_BASS], FxLevel.OFF),
+                volumeBoost = parseEnum(prefs[KEY_VOLUME], FxLevel.OFF),
+                reduceMotion = prefs[KEY_REDUCE_MOTION] ?: false,
             )
         }.distinctUntilChanged()
 
-    /** Tolerates values saved by older builds (e.g. LOSSLESS_IF_AVAILABLE
-     *  maps to HIGH) so an upgrade never resets or crashes the setting. */
     private fun parseQuality(raw: String?): AudioQuality = when (raw) {
         "LOW" -> AudioQuality.LOW
         "NORMAL" -> AudioQuality.NORMAL
         else -> AudioQuality.HIGH
     }
+
+    private inline fun <reified T : Enum<T>> parseEnum(raw: String?, default: T): T =
+        enumValues<T>().firstOrNull { it.name == raw } ?: default
 
     suspend fun setAudioQuality(context: Context, quality: AudioQuality) {
         context.dataStore.edit { it[KEY_AUDIO_QUALITY] = quality.name }
@@ -59,6 +80,30 @@ object SettingsStore {
 
     suspend fun setAutoplay(context: Context, enabled: Boolean) {
         context.dataStore.edit { it[KEY_AUTOPLAY] = enabled }
+    }
+
+    suspend fun setOpenPlayerOnTap(context: Context, enabled: Boolean) {
+        context.dataStore.edit { it[KEY_OPEN_PLAYER] = enabled }
+    }
+
+    suspend fun setSkipSilence(context: Context, enabled: Boolean) {
+        context.dataStore.edit { it[KEY_SKIP_SILENCE] = enabled }
+    }
+
+    suspend fun setEqPreset(context: Context, preset: EqPreset) {
+        context.dataStore.edit { it[KEY_EQ] = preset.name }
+    }
+
+    suspend fun setBassBoost(context: Context, level: FxLevel) {
+        context.dataStore.edit { it[KEY_BASS] = level.name }
+    }
+
+    suspend fun setVolumeBoost(context: Context, level: FxLevel) {
+        context.dataStore.edit { it[KEY_VOLUME] = level.name }
+    }
+
+    suspend fun setReduceMotion(context: Context, enabled: Boolean) {
+        context.dataStore.edit { it[KEY_REDUCE_MOTION] = enabled }
     }
 
     /** One-off read (callers that don't keep their own collector). */

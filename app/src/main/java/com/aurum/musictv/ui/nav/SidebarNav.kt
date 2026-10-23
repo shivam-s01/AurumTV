@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Search
@@ -69,6 +70,8 @@ fun SidebarNav(
     current: NavDestination,
     onNavigate: (NavDestination) -> Unit,
     modifier: Modifier = Modifier,
+    showNowPlaying: Boolean = false,
+    onNowPlaying: () -> Unit = {},
 ) {
     Column(
         modifier = modifier
@@ -103,6 +106,10 @@ fun SidebarNav(
                     selected = destination == current,
                     onClick = { onNavigate(destination) },
                 )
+            }
+            // Way back into the full player from any main screen.
+            if (showNowPlaying) {
+                NowPlayingRailItem(onClick = onNowPlaying)
             }
         }
     }
@@ -148,6 +155,46 @@ private fun SidebarIcon(destination: NavDestination, selected: Boolean, onClick:
                 fontSize = 11.sp,
                 color = if (selected) AurumColors.Gold else AurumColors.TextMuted,
                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            )
+        }
+    }
+}
+
+@Composable
+private fun NowPlayingRailItem(onClick: () -> Unit) {
+    val touchFocusRequester = rememberClickFocusRequester()
+    val isTouch = isTouchDevice()
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(16.dp)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = AurumColors.GoldDark.copy(alpha = 0.18f),
+            focusedContainerColor = AurumColors.AmoledBgElevated,
+        ),
+        border = ClickableSurfaceDefaults.border(
+            focusedBorder = Border(
+                border = BorderStroke(2.dp, AurumColors.Gold),
+                shape = RoundedCornerShape(16.dp),
+            ),
+        ),
+        modifier = Modifier.width(76.dp).adaptiveClickable(touchFocusRequester, isTouch, onClick),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.GraphicEq,
+                contentDescription = "Now Playing",
+                tint = AurumColors.Gold,
+                modifier = Modifier.size(24.dp),
+            )
+            Text(
+                text = "Playing",
+                fontSize = 11.sp,
+                color = AurumColors.Gold,
+                fontWeight = FontWeight.SemiBold,
             )
         }
     }

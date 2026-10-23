@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.aurum.musictv.settings.AppSettings
 import com.aurum.musictv.settings.AudioQuality
 import com.aurum.musictv.settings.DeviceInfo
+import com.aurum.musictv.settings.EqPreset
+import com.aurum.musictv.settings.FxLevel
 import com.aurum.musictv.settings.SettingsStore
 import com.aurum.musictv.sync.AuthRepository
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -56,6 +58,30 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun setAutoplay(enabled: Boolean) = viewModelScope.launch {
         SettingsStore.setAutoplay(getApplication(), enabled)
+    }
+
+    fun setOpenPlayerOnTap(enabled: Boolean) = viewModelScope.launch {
+        SettingsStore.setOpenPlayerOnTap(getApplication(), enabled)
+    }
+
+    fun setSkipSilence(enabled: Boolean) = viewModelScope.launch {
+        SettingsStore.setSkipSilence(getApplication(), enabled)
+    }
+
+    fun setEqPreset(preset: EqPreset) = viewModelScope.launch {
+        SettingsStore.setEqPreset(getApplication(), preset)
+    }
+
+    fun setBassBoost(level: FxLevel) = viewModelScope.launch {
+        SettingsStore.setBassBoost(getApplication(), level)
+    }
+
+    fun setVolumeBoost(level: FxLevel) = viewModelScope.launch {
+        SettingsStore.setVolumeBoost(getApplication(), level)
+    }
+
+    fun setReduceMotion(enabled: Boolean) = viewModelScope.launch {
+        SettingsStore.setReduceMotion(getApplication(), enabled)
     }
 
     fun clearCache() = viewModelScope.launch {

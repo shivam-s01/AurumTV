@@ -31,6 +31,8 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.aurum.musictv.settings.AudioQuality
+import com.aurum.musictv.settings.EqPreset
+import com.aurum.musictv.settings.FxLevel
 import com.aurum.musictv.ui.theme.AurumColors
 import com.aurum.musictv.ui.util.adaptiveClickable
 import com.aurum.musictv.ui.util.isTouchDevice
@@ -76,12 +78,79 @@ fun SettingsScreen(
         item { SectionHeader("Playback") }
         item {
             SettingsGroup {
-                AudioQualityRow(current = state.settings.audioQuality, onSelect = viewModel::setAudioQuality)
+                ChoiceRow(
+                    title = "Audio Quality",
+                    description = "Applies to the current song instantly",
+                    options = listOf(
+                        AudioQuality.LOW to "Low · saves data",
+                        AudioQuality.NORMAL to "Normal",
+                        AudioQuality.HIGH to "High · best",
+                    ),
+                    current = state.settings.audioQuality,
+                    onSelect = viewModel::setAudioQuality,
+                )
                 ToggleRow(
                     label = "Autoplay",
                     description = "Automatically play the next song in queue",
                     checked = state.settings.autoplay,
                     onToggle = viewModel::setAutoplay,
+                )
+                ToggleRow(
+                    label = "Open full player on song tap",
+                    description = "Off: song just plays and a mini player shows at the bottom",
+                    checked = state.settings.openPlayerOnTap,
+                    onToggle = viewModel::setOpenPlayerOnTap,
+                )
+                ToggleRow(
+                    label = "Skip silence",
+                    description = "Trims silent gaps in songs, applies instantly",
+                    checked = state.settings.skipSilence,
+                    onToggle = viewModel::setSkipSilence,
+                )
+            }
+        }
+
+        item { SectionHeader("Sound") }
+        item {
+            SettingsGroup {
+                ChoiceRow(
+                    title = "Equalizer",
+                    description = "Changes the sound of the current song instantly",
+                    options = listOf(
+                        EqPreset.FLAT to "Flat",
+                        EqPreset.BASS to "Bass",
+                        EqPreset.VOCAL to "Vocal",
+                        EqPreset.TREBLE to "Treble",
+                        EqPreset.LOUD to "Loud",
+                    ),
+                    current = state.settings.eqPreset,
+                    onSelect = viewModel::setEqPreset,
+                )
+                ChoiceRow(
+                    title = "Bass Boost",
+                    description = null,
+                    options = fxOptions,
+                    current = state.settings.bassBoost,
+                    onSelect = viewModel::setBassBoost,
+                )
+                ChoiceRow(
+                    title = "Volume Boost",
+                    description = "Louder output for quiet songs",
+                    options = fxOptions,
+                    current = state.settings.volumeBoost,
+                    onSelect = viewModel::setVolumeBoost,
+                )
+            }
+        }
+
+        item { SectionHeader("Display") }
+        item {
+            SettingsGroup {
+                ToggleRow(
+                    label = "Reduce motion",
+                    description = "Stops Home banner auto-rotation and fades (smoother on low-RAM TVs)",
+                    checked = state.settings.reduceMotion,
+                    onToggle = viewModel::setReduceMotion,
                 )
             }
         }
@@ -244,23 +313,35 @@ private fun SwitchDot(checked: Boolean) {
     }
 }
 
+private val fxOptions = listOf(
+    FxLevel.OFF to "Off",
+    FxLevel.LOW to "Low",
+    FxLevel.MEDIUM to "Medium",
+    FxLevel.HIGH to "High",
+)
+
 @Composable
-private fun AudioQualityRow(current: AudioQuality, onSelect: (AudioQuality) -> Unit) {
+private fun <T> ChoiceRow(
+    title: String,
+    description: String?,
+    options: List<Pair<T, String>>,
+    current: T,
+    onSelect: (T) -> Unit,
+) {
     Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 18.dp)) {
-        Text("Audio Quality", color = AurumColors.TextPrimary, fontSize = 16.sp)
+        Text(title, color = AurumColors.TextPrimary, fontSize = 16.sp)
+        if (description != null) {
+            Text(description, color = AurumColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
+        }
         Row(
             modifier = Modifier.padding(top = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            AudioQuality.entries.forEach { quality ->
+            options.forEach { (value, label) ->
                 ChoiceChip(
-                    label = when (quality) {
-                        AudioQuality.LOW -> "Low · saves data"
-                        AudioQuality.NORMAL -> "Normal"
-                        AudioQuality.HIGH -> "High · best"
-                    },
-                    selected = quality == current,
-                    onClick = { onSelect(quality) },
+                    label = label,
+                    selected = value == current,
+                    onClick = { onSelect(value) },
                 )
             }
         }

@@ -124,7 +124,7 @@ object AurumApi {
         val cacheKey = "search:${q.lowercase()}:$limit"
         NetworkResilience.EdgeCache.get<List<Song>>(cacheKey)?.let { return it }
 
-        val songs = raceSearch(q, limit)
+        val songs = raceSearch(q, limit).distinctBy { it.id }
         if (songs.isNotEmpty()) {
             NetworkResilience.EdgeCache.put(cacheKey, songs, ttlMs = SEARCH_CACHE_TTL_MS)
         }

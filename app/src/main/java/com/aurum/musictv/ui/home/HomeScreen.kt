@@ -15,7 +15,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -57,6 +59,10 @@ fun HomeScreen(
     onProfileClick: () -> Unit,
     onSettingsClick: () -> Unit,
     viewModel: HomeViewModel = viewModel(),
+    // Hoisted so the scroll position survives opening the player/Settings
+    // and coming back (Spotify-like: you land where you left).
+    listState: LazyListState = rememberLazyListState(),
+    reduceMotion: Boolean = false,
 ) {
     val state by viewModel.uiState.collectAsState()
 
@@ -69,6 +75,7 @@ fun HomeScreen(
     }
 
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize().background(AurumColors.AmoledBg),
         contentPadding = PaddingValues(bottom = 48.dp),
         verticalArrangement = Arrangement.spacedBy(32.dp),
@@ -78,6 +85,7 @@ fun HomeScreen(
                 if (heroSongs.isNotEmpty()) {
                     HeroCarousel(
                         songs = heroSongs,
+                        reduceMotion = reduceMotion,
                         onPlayClick = { song ->
                             val list = state.continueListening?.let { c -> listOf(c) }
                                 ?: state.sections.firstOrNull()?.second ?: listOf(song)
@@ -210,11 +218,11 @@ private fun HomeErrorState(message: String?, onRetry: () -> Unit) {
  * for.
  */
 @Composable
-private fun HeroCarousel(songs: List<Song>, onPlayClick: (Song) -> Unit) {
+private fun HeroCarousel(songs: List<Song>, reduceMotion: Boolean, onPlayClick: (Song) -> Unit) {
     var currentIndex by remember(songs) { mutableStateOf(0) }
 
-    LaunchedEffect(songs) {
-        if (songs.size <= 1) return@LaunchedEffect
+    LaunchedEffect(songs, reduceMotion) {
+        if (songs.size <= 1 || reduceMotion) return@LaunchedEffect
         while (true) {
             kotlinx.coroutines.delay(6000)
             currentIndex = (currentIndex + 1) % songs.size
@@ -226,11 +234,11 @@ private fun HeroCarousel(songs: List<Song>, onPlayClick: (Song) -> Unit) {
     // Crossfade: alpha resets to 0 whenever currentIndex changes (key =
     // currentIndex below), then animates up to 1 over 600ms — a real
     // fade-in on every slide change, not a no-op animation to a constant.
-    var alphaTarget by remember(currentIndex) { mutableStateOf(0f) }
+    var alphaTarget by remember(currentIndex, reduceMotion) { mutableStateOf(if (reduceMotion) 1f else 0f) }
     LaunchedEffect(currentIndex) { alphaTarget = 1f }
     val alpha by animateFloatAsState(
         targetValue = alphaTarget,
-        animationSpec = tween(durationMillis = 600),
+        animationSpec = tween(durationMillis = if (reduceMotion) 0 else 600),
         label = "heroCrossfade",
     )
 
@@ -240,7 +248,7 @@ private fun HeroCarousel(songs: List<Song>, onPlayClick: (Song) -> Unit) {
             .height(420.dp),
     ) {
         coil.compose.AsyncImage(
-            model = song.albumArtUrl,
+            model = com.aurum.musictv.ui.util.bigArt(song.albumArtUrl),
             contentDescription = null,
             modifier = Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha },
             contentScale = androidx.compose.ui.layout.ContentScale.Crop,

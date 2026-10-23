@@ -43,7 +43,6 @@ import com.aurum.musictv.ui.util.isTouchDevice
 import com.aurum.musictv.ui.util.rememberClickFocusRequester
 import com.aurum.musictv.player.PlayerManager
 import com.aurum.musictv.ui.theme.AurumColors
-import kotlinx.coroutines.delay
 
 /**
  * Progress bar and controls are built from plain foundation Box/Row for
@@ -65,7 +64,7 @@ fun PlayerScreen(playerManager: PlayerManager) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             AsyncImage(
-                model = song.albumArtUrl,
+                model = com.aurum.musictv.ui.util.bigArt(song.albumArtUrl),
                 contentDescription = song.title,
                 modifier = Modifier.size(360.dp).clip(RoundedCornerShape(16.dp)),
                 contentScale = ContentScale.Crop,
@@ -163,31 +162,6 @@ fun PlayerScreen(playerManager: PlayerManager) {
                     )
                 }
             }
-        }
-
-        // Playback error toast — surfaces the click-failure/auto-skip
-        // feedback from PlayerManager instead of leaving the user
-        // guessing whether their remote press registered.
-        state.playbackError?.let { error ->
-            PlaybackErrorToast(message = error, onDismiss = { playerManager.dismissPlaybackError() })
-        }
-    }
-}
-
-@Composable
-private fun PlaybackErrorToast(message: String, onDismiss: () -> Unit) {
-    LaunchedEffect(message) {
-        delay(3000)
-        onDismiss()
-    }
-    Box(modifier = Modifier.fillMaxSize().padding(bottom = 32.dp), contentAlignment = Alignment.BottomCenter) {
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(10.dp))
-                .background(AurumColors.AmoledBgElevated)
-                .padding(horizontal = 20.dp, vertical = 12.dp),
-        ) {
-            Text(message, color = AurumColors.TextPrimary, fontSize = 14.sp)
         }
     }
 }

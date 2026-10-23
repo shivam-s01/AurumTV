@@ -42,8 +42,10 @@ android {
         // ~2017 is API 23+, so this costs negligible real-world reach.
         minSdk = 23
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        // CI sets GITHUB_RUN_NUMBER, so every release build has a higher
+        // versionCode and installs as an update over the previous one.
+        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+        versionName = "1.1.0"
     }
 
     signingConfigs {
