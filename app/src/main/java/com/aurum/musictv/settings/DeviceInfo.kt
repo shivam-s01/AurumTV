@@ -36,5 +36,6 @@ object DeviceInfo {
     fun clearCache(context: Context) {
         runCatching { context.cacheDir.deleteRecursively() }
         NetworkResilience.EdgeCache.clear()
+        com.aurum.musictv.data.remote.YoutubeStreamResolver.clearCache()
     }
 }

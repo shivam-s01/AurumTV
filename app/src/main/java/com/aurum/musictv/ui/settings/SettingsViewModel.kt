@@ -4,7 +4,6 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.aurum.musictv.settings.AppSettings
-import com.aurum.musictv.settings.AppTheme
 import com.aurum.musictv.settings.AudioQuality
 import com.aurum.musictv.settings.DeviceInfo
 import com.aurum.musictv.settings.SettingsStore
@@ -51,24 +50,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         )
     }
 
-    fun setTheme(theme: AppTheme) = viewModelScope.launch {
-        SettingsStore.setTheme(getApplication(), theme)
-    }
-
     fun setAudioQuality(quality: AudioQuality) = viewModelScope.launch {
         SettingsStore.setAudioQuality(getApplication(), quality)
     }
 
     fun setAutoplay(enabled: Boolean) = viewModelScope.launch {
         SettingsStore.setAutoplay(getApplication(), enabled)
-    }
-
-    fun setCrossfadeSeconds(seconds: Int) = viewModelScope.launch {
-        SettingsStore.setCrossfadeSeconds(getApplication(), seconds)
-    }
-
-    fun setNormalizeVolume(enabled: Boolean) = viewModelScope.launch {
-        SettingsStore.setNormalizeVolume(getApplication(), enabled)
     }
 
     fun clearCache() = viewModelScope.launch {

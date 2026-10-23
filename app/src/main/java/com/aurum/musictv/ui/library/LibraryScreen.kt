@@ -13,7 +13,9 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -46,7 +48,17 @@ fun LibraryScreen(
     viewModel: LibraryViewModel = viewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
-    val activeList = if (state.tab == LibraryTab.LIKED_SONGS) state.likedSongs else state.recentlyPlayed
+    LaunchedEffect(Unit) { viewModel.refresh() }
+
+    val openPlaylist = state.playlists.firstOrNull { it.id == state.openPlaylistId }
+    BackHandler(enabled = openPlaylist != null) { viewModel.openPlaylist(null) }
+
+    val showPlaylistList = state.tab == LibraryTab.PLAYLISTS && openPlaylist == null
+    val activeList = when {
+        state.tab == LibraryTab.LIKED_SONGS -> state.likedSongs
+        state.tab == LibraryTab.RECENTLY_PLAYED -> state.recentlyPlayed
+        else -> openPlaylist?.songs ?: emptyList()
+    }
 
     Column(
         modifier = Modifier.fillMaxSize().background(AurumColors.AmoledBg).padding(32.dp),
@@ -67,9 +79,37 @@ fun LibraryScreen(
                 selected = state.tab == LibraryTab.RECENTLY_PLAYED,
                 onClick = { viewModel.selectTab(LibraryTab.RECENTLY_PLAYED) },
             )
+            TabChip(
+                label = "Playlists",
+                selected = state.tab == LibraryTab.PLAYLISTS,
+                onClick = { viewModel.selectTab(LibraryTab.PLAYLISTS) },
+            )
         }
 
         when {
+            !state.isSignedIn -> Box(
+                modifier = Modifier.fillMaxWidth().padding(top = 80.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "Sign in with your phone's account (profile icon on Home) to see your library",
+                    color = AurumColors.TextSecondary,
+                    fontSize = 16.sp,
+                )
+            }
+
+            showPlaylistList && state.playlists.isNotEmpty() -> Column(
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                state.playlists.forEach { pl ->
+                    TabChip(
+                        label = "${pl.name}  ·  ${pl.songs.size} songs",
+                        selected = false,
+                        onClick = { viewModel.openPlaylist(pl.id) },
+                    )
+                }
+            }
+
             state.isLoading -> Box(
                 modifier = Modifier.fillMaxWidth().padding(top = 80.dp),
                 contentAlignment = Alignment.Center,
@@ -82,10 +122,10 @@ fun LibraryScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = if (state.tab == LibraryTab.LIKED_SONGS) {
-                        "Songs you like will appear here"
-                    } else {
-                        "Songs you play will appear here"
+                    text = when (state.tab) {
+                        LibraryTab.LIKED_SONGS -> "Songs you like will appear here"
+                        LibraryTab.RECENTLY_PLAYED -> "Songs you play will appear here"
+                        LibraryTab.PLAYLISTS -> "Playlists from your phone will appear here"
                     },
                     color = AurumColors.TextSecondary,
                     fontSize = 16.sp,

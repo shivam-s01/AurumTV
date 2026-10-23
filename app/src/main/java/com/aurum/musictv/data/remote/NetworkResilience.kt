@@ -22,14 +22,21 @@ import kotlinx.coroutines.delay
 object NetworkResilience {
 
     /** App-wide "are we online right now" check. Cheap, synchronous,
-     *  safe to call before every network attempt. */
+     *  safe to call before every network attempt.
+     *
+     *  Deliberately does NOT require NET_CAPABILITY_VALIDATED: that flag is
+     *  only set after Android's own connectivity probe (a request to a
+     *  Google URL) succeeds. Many TV boxes / routers / regions block or
+     *  slow that probe, so they report "not validated" while the internet
+     *  works perfectly — requiring it made the app refuse to even try
+     *  playing ("You're offline") on a working connection. If the network
+     *  really is down the actual request fails and reports that itself. */
     fun isOnline(context: Context): Boolean {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return true // fail open — don't block playback attempts on a broken check
         val network = cm.activeNetwork ?: return false
-        val capabilities = cm.getNetworkCapabilities(network) ?: return false
-        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        val capabilities = cm.getNetworkCapabilities(network) ?: return true
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
     /**

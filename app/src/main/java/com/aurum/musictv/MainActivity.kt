@@ -17,13 +17,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aurum.musictv.data.model.Song
-import com.aurum.musictv.data.model.toSong
 import com.aurum.musictv.player.PlayerManager
 import com.aurum.musictv.sync.AuthRepository
-import com.aurum.musictv.sync.SyncRepository
 import com.aurum.musictv.ui.auth.AuthScreen
 import com.aurum.musictv.ui.home.HomeScreen
 import com.aurum.musictv.ui.home.HomeViewModel
@@ -35,7 +32,6 @@ import com.aurum.musictv.ui.search.SearchScreen
 import com.aurum.musictv.ui.settings.SettingsScreen
 import com.aurum.musictv.ui.theme.AurumColors
 import com.aurum.musictv.ui.theme.AurumTvTheme
-import kotlinx.coroutines.launch
 
 /**
  * Single-Activity app, one PlayerManager instance for the whole lifecycle
@@ -160,27 +156,6 @@ private fun AurumApp(playerManager: PlayerManager) {
                     onSongClick = { song, queue ->
                         val startIndex = queue.indexOf(song).coerceAtLeast(0)
                         playerManager.playQueue(queue, startIndex)
-                        screen = Screen.Player
-                    },
-                    onResumeClick = { song, positionMs ->
-                        // Prefer the full synced queue (pushQueue/fetchQueue)
-                        // so resuming on TV continues the same playlist
-                        // phone was in, not just the single song — falls
-                        // back to a one-song queue if the queue table has
-                        // nothing (e.g. phone was playing a lone track, or
-                        // the fetch fails).
-                        homeViewModel.viewModelScope.launch {
-                            val queueRow = runCatching { SyncRepository.fetchQueue() }.getOrNull()
-                            val queueSongs = queueRow?.items?.map { it.toSong() }
-                            if (!queueSongs.isNullOrEmpty() && queueSongs.any { it.id == song.id }) {
-                                val startIndex = queueSongs.indexOfFirst { it.id == song.id }.coerceAtLeast(0)
-                                playerManager.playQueue(queueSongs, startIndex)
-                                kotlinx.coroutines.delay(500) // let prepare() land first, same as resumeFrom()
-                                playerManager.seekTo(positionMs)
-                            } else {
-                                playerManager.resumeFrom(song, positionMs)
-                            }
-                        }
                         screen = Screen.Player
                     },
                     onSearchClick = { screen = Screen.Search },

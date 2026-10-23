@@ -30,7 +30,6 @@ import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
-import com.aurum.musictv.settings.AppTheme
 import com.aurum.musictv.settings.AudioQuality
 import com.aurum.musictv.ui.theme.AurumColors
 import com.aurum.musictv.ui.util.adaptiveClickable
@@ -38,8 +37,7 @@ import com.aurum.musictv.ui.util.isTouchDevice
 import com.aurum.musictv.ui.util.rememberClickFocusRequester
 
 /**
- * Full Settings screen — Network + Playback prefs (Theme, Audio Quality,
- * Autoplay, Crossfade, Normalize Volume) + Storage (Clear Cache) + Account
+ * Full Settings screen — Network + Playback prefs (Audio Quality, Autoplay) + Storage (Clear Cache) + Account
  * (About, Privacy, Logout, Device Info). Every row is a focusable
  * tv-material Surface so it's fully D-pad navigable, same pattern as
  * SongCard/TopBar elsewhere in the app — no new focus-handling approach
@@ -78,23 +76,12 @@ fun SettingsScreen(
         item { SectionHeader("Playback") }
         item {
             SettingsGroup {
-                ThemeRow(current = state.settings.theme, onSelect = viewModel::setTheme)
                 AudioQualityRow(current = state.settings.audioQuality, onSelect = viewModel::setAudioQuality)
                 ToggleRow(
                     label = "Autoplay",
                     description = "Automatically play the next song in queue",
                     checked = state.settings.autoplay,
                     onToggle = viewModel::setAutoplay,
-                )
-                CrossfadeRow(
-                    seconds = state.settings.crossfadeSeconds,
-                    onChange = viewModel::setCrossfadeSeconds,
-                )
-                ToggleRow(
-                    label = "Normalize Volume",
-                    description = "Keep loudness consistent across songs and sources",
-                    checked = state.settings.normalizeVolume,
-                    onToggle = viewModel::setNormalizeVolume,
                 )
             }
         }
@@ -258,26 +245,6 @@ private fun SwitchDot(checked: Boolean) {
 }
 
 @Composable
-private fun ThemeRow(current: AppTheme, onSelect: (AppTheme) -> Unit) {
-    Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 18.dp)) {
-        Text("Theme", color = AurumColors.TextPrimary, fontSize = 16.sp)
-        Row(
-            modifier = Modifier.padding(top = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            AppTheme.entries.forEach { theme ->
-                ChoiceChip(
-                    label = theme.name.replace('_', ' ').lowercase()
-                        .replaceFirstChar { it.uppercase() },
-                    selected = theme == current,
-                    onClick = { onSelect(theme) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun AudioQualityRow(current: AudioQuality, onSelect: (AudioQuality) -> Unit) {
     Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 18.dp)) {
         Text("Audio Quality", color = AurumColors.TextPrimary, fontSize = 16.sp)
@@ -288,38 +255,12 @@ private fun AudioQualityRow(current: AudioQuality, onSelect: (AudioQuality) -> U
             AudioQuality.entries.forEach { quality ->
                 ChoiceChip(
                     label = when (quality) {
-                        AudioQuality.LOW -> "Low"
+                        AudioQuality.LOW -> "Low · saves data"
                         AudioQuality.NORMAL -> "Normal"
-                        AudioQuality.HIGH -> "High"
-                        AudioQuality.LOSSLESS_IF_AVAILABLE -> "Lossless"
+                        AudioQuality.HIGH -> "High · best"
                     },
                     selected = quality == current,
                     onClick = { onSelect(quality) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun CrossfadeRow(seconds: Int, onChange: (Int) -> Unit) {
-    Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 18.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text("Crossfade", color = AurumColors.TextPrimary, fontSize = 16.sp)
-            Text(if (seconds == 0) "Off" else "${seconds}s", color = AurumColors.TextSecondary, fontSize = 14.sp)
-        }
-        Row(
-            modifier = Modifier.padding(top = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            listOf(0, 2, 4, 6, 8, 12).forEach { value ->
-                ChoiceChip(
-                    label = if (value == 0) "Off" else "${value}s",
-                    selected = value == seconds,
-                    onClick = { onChange(value) },
                 )
             }
         }

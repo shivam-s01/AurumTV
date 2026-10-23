@@ -2,7 +2,10 @@ package com.aurum.musictv.player
 
 import android.app.PendingIntent
 import android.content.Intent
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
@@ -12,10 +15,9 @@ import androidx.media3.session.MediaSessionService
 import com.aurum.musictv.MainActivity
 
 /**
- * TV equivalent of AurumMediaSessionService.kt from the phone app. Same
- * low-RAM buffer philosophy as AurumAudioEngine.kt (see its comments on
- * the 2026-07-07 stall fix) — target hardware here is WORSE (1GB RAM TV
- * boxes vs. mid-range phones), so buffers are trimmed even further.
+ * TV equivalent of AurumMediaSessionService.kt / AurumAudioEngine.kt from
+ * the phone app, with the same network + buffer settings that make
+ * YouTube (googlevideo.com) streams play reliably there.
  */
 @UnstableApi
 class AurumTvPlaybackService : MediaSessionService() {
@@ -25,14 +27,10 @@ class AurumTvPlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
 
-        // FIX (2026-07-19): setTargetBufferBytes(2 MiB) here was the exact
-        // same bug already fixed once on the phone app
-        // (AurumAudioEngine.kt: setTargetBufferBytes(1MB) -> -1). A byte
-        // ceiling makes DefaultLoadControl stop filling the buffer once
-        // that many bytes load, even if bufferForPlaybackMs hasn't been
-        // reached yet. Passing -1 disables the byte ceiling so the
-        // duration-based bounds below are the only limits (matches
-        // ExoPlayer's own default and the phone app's fix).
+        // Duration-based buffering only (no byte ceiling — a byte cap makes
+        // DefaultLoadControl stop filling early; same fix as the phone's
+        // AurumAudioEngine). Start playing after 1.5 s of audio for a fast
+        // first sound; after a stall wait 3 s so it doesn't stutter.
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
                 /* minBufferMs = */ 15_000,
@@ -44,30 +42,38 @@ class AurumTvPlaybackService : MediaSessionService() {
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
-        // FIX: MediaItem.fromUri() (PlayerManager.playIndex) used
-        // ExoPlayer's default HttpDataSource — no explicit User-Agent,
-        // short timeouts. Worker/CDN links can cold-start slowly and some
-        // CDNs reject requests with no User-Agent, causing silent connect
-        // failures. Explicit factory fixes both.
+        // Phone app's exact HTTP setup: googlevideo.com serves most
+        // consistently to a real browser-style User-Agent (an unusual
+        // custom UA is what gets some CDN requests throttled/rejected), and
+        // 20 s timeouts leave room for slow Wi-Fi without killing a stream
+        // that is merely slow. Wrapped in DefaultDataSource so non-http
+        // schemes still resolve.
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("Aurum-TV/1.0 (Linux;Android) ExoPlayerLib/1.4.0")
-            .setConnectTimeoutMs(15_000)
-            .setReadTimeoutMs(15_000)
+            .setUserAgent(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                    "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+            )
+            .setConnectTimeoutMs(20_000)
+            .setReadTimeoutMs(20_000)
             .setAllowCrossProtocolRedirects(true)
 
-        val mediaSourceFactory = DefaultMediaSourceFactory(this)
-            .setDataSourceFactory(httpDataSourceFactory)
+        val mediaSourceFactory = DefaultMediaSourceFactory(
+            DefaultDataSource.Factory(this, httpDataSourceFactory)
+        )
+
+        // Declare this as music so the TV's audio routing/focus treat it
+        // correctly (HDMI/ARC, ducking for system sounds, pausing for
+        // other media apps).
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+            .build()
 
         val player = ExoPlayer.Builder(this)
             .setLoadControl(loadControl)
             .setMediaSourceFactory(mediaSourceFactory)
-            // TV boxes often sit connected via ethernet or WiFi with the
-            // screen technically always "on" (no lockscreen the way a
-            // phone has), but this still matters for CPU wake locks during
-            // network buffering — same reasoning as the phone app's
-            // AurumAudioEngine wake-lock handling, just simpler since TV
-            // has no doze-mode battery restrictions to fight.
-            .setWakeMode(androidx.media3.common.C.WAKE_MODE_NETWORK)
+            .setAudioAttributes(audioAttributes, /* handleAudioFocus = */ true)
+            .setWakeMode(C.WAKE_MODE_NETWORK)
             .setHandleAudioBecomingNoisy(true)
             .build()
 

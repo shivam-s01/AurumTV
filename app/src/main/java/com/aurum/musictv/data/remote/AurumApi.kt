@@ -1,282 +1,269 @@
 package com.aurum.musictv.data.remote
 
+import android.util.Log
 import com.aurum.musictv.data.model.Song
 import com.aurum.musictv.data.model.SongSource
+import com.aurum.musictv.settings.AudioQuality
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
+import okhttp3.Response
 import org.json.JSONObject
+import org.schabi.newpipe.extractor.ServiceList
+import org.schabi.newpipe.extractor.stream.StreamInfoItem
+import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+
+/** One Home row as it arrives — rows are streamed in so the first one is
+ *  on screen after ~1 search round-trip instead of after ALL of them. */
+data class HomeRow(val index: Int, val title: String, val songs: List<Song>)
 
 /**
- * TV-side port of lib/services/api_service.dart, kept intentionally small:
- * only search, home sections, and stream resolution. No lyrics, no
- * recommendation-engine calls, no offline queue splicing — those stay
- * phone-only for now. Same Worker backend, so zero backend changes needed.
+ * TV-side port of the phone app's YouTube-first data layer (api_service.dart):
+ * YouTube Music search through the Worker's /api/yt-music-search route, with
+ * a native NewPipe search as a raced fallback, plus stream resolution via
+ * [YoutubeStreamResolver]. Saavn is gone on purpose — the phone app has it
+ * disabled too (_saavnDisabled = true), so every song plays from YouTube.
+ *
+ * Songs that arrive from the phone's cloud sync with a non-YouTube source
+ * (old favorites/history saved while Saavn was active) are matched to their
+ * YouTube equivalent by title + artist at play time, see [youtubeIdFor].
  */
 object AurumApi {
 
-    // Same Worker URL as the phone app (lib/services/api_service.dart:209).
-    private const val WORKER = "https://aurum-worker.shivamsharma962122.workers.dev"
+    // Same Worker as the phone app (AppConstants.apiBase).
+    internal const val WORKER = "https://aurum-worker.shivamsharma962122.workers.dev"
 
-    // FIX (2026-07-19): The phone app's real Saavn source as of the
-    // 2026-07-17 update (api_service.dart) is jiosaavn-op v2 — its
-    // /api/songs/:id route returns clean, non-DRM direct .mp4 downloadUrl
-    // entries. The Worker's /api/songs route (previously the only thing
-    // this file called for SAAVN) is the phone app's LAST-resort fallback,
-    // not the primary — using it as the only source here is why Saavn
-    // songs were failing/stalling on TV far more than on phone.
-    private const val SAAVN_V2 = "https://jiosaavn-op-c4oo.onrender.com"
+    // Home: 6 rows x 15 songs, 3 searches in flight at a time. Enough to
+    // fill the screen, light enough for a 1 GB TV box.
+    private const val HOME_ROW_COUNT = 6
+    private const val HOME_ROW_SONGS = 15
+    private const val HOME_CONCURRENCY = 3
 
-    /** Last raw diagnostic captured from a search() call — surfaced by
-     *  HomeBrowseFragment's Toast so on-device failures are debuggable
-     *  without logcat access. Not thread-safe by design; this is a
-     *  single-user single-screen TV app, last-write-wins is fine here. */
+    // Search: native NewPipe search is raced in if the Worker is slow.
+    private const val SEARCH_HEDGE_MS = 2_500L
+    private const val SEARCH_CACHE_TTL_MS = 5 * 60_000L
+
+    /** Last raw diagnostic from a failed network call — surfaced by Home /
+     *  Search error states so a failure is debuggable without logcat. */
+    @Volatile
     var lastDiagnostic: String = ""
         private set
 
-    // Timeouts tuned for flaky TV-box wifi: connect fails fast (so a dead
-    // network surfaces quickly instead of hanging the UI), read is a bit
-    // longer to tolerate the Worker's own cold-start / upstream latency.
-    // retryOnConnectionFailure handles low-level socket retries; the
-    // higher-level NetworkResilience.retryWithBackoff (used in search/
-    // resolveStreamUrl below) handles retrying on empty/failed *results*,
-    // which OkHttp's own retry can't do.
-    //
-    // dispatcher.maxRequests capped at 6: OkHttp defaults to 64 in-flight
-    // requests, sized for phone/desktop-class devices. On a 1GB-RAM TV
-    // box that's needless thread/socket overhead sitting idle most of
-    // the time; 6 comfortably covers this app's real peak (homeSections'
-    // own semaphore already caps parallel search calls at 3) while still
-    // letting a stream resolve overlap a search without queuing.
-    private val client = OkHttpClient.Builder()
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    // Flaky TV-box Wi-Fi: fail fast on connect, bounded overall. Capped
+    // dispatcher — a 1 GB box has no use for OkHttp's default 64 requests.
+    internal val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(6, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
+        .callTimeout(15, TimeUnit.SECONDS)
         .retryOnConnectionFailure(true)
         .connectionPool(okhttp3.ConnectionPool(4, 60, TimeUnit.SECONDS))
         .dispatcher(
             okhttp3.Dispatcher().apply {
-                maxRequests = 6
-                maxRequestsPerHost = 6
+                maxRequests = 12
+                maxRequestsPerHost = 12
             }
         )
         .build()
 
-    private suspend fun getJson(url: String): JSONObject? = withContext(Dispatchers.IO) {
-        try {
-            val req = Request.Builder().url(url).build()
-            client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return@withContext null
-                val body = resp.body?.string() ?: return@withContext null
-                JSONObject(body)
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
+    // Search/browse calls: tight 5 s budget (same as the phone app) so a
+    // slow Worker hands over to the native fallback quickly.
+    private val fastClient: OkHttpClient = client.newBuilder()
+        .callTimeout(5, TimeUnit.SECONDS)
+        .build()
 
-    /** Live search used by the Search screen and Home's query rotation.
-     *  Wrapped in retryWithBackoff so one dropped packet on TV wifi
-     *  doesn't surface as "No results" — and short-cached via EdgeCache
-     *  so typing-then-backspacing-then-retyping the same query within a
-     *  few seconds doesn't refire the network call. Results are re-ranked
-     *  client-side by [rankByRelevance] before returning, since the raw
-     *  Worker/Saavn order is not always the best match for what the user
-     *  actually typed. */
-    suspend fun search(query: String, limit: Int = 25): List<Song> {
-        val cacheKey = "search:$query:$limit"
-        NetworkResilience.EdgeCache.get<List<Song>>(cacheKey)?.let { return it }
-
-        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val songs = NetworkResilience.retryWithBackoff(
-            maxAttempts = 3,
-            isSuccess = { it: List<Song> -> it.isNotEmpty() },
-        ) {
-            // FIX (2026-07-19, corrected): An earlier version of this fix
-            // made jiosaavn-op v2 (a free-tier onrender.com instance) the
-            // FIRST thing tried on every search — including all 8 of
-            // Home's parallel row loads. Free-tier onrender instances
-            // spin down after inactivity and can take 30-50s to
-            // cold-start on the first hit; with 8 rows all paying that
-            // latency (semaphore-limited to 3 at a time), Home could take
-            // over a minute to show anything, and with no loading/error
-            // state wired up in HomeScreen.kt, that looked exactly like
-            // "home page is just empty."
-            //
-            // Reverted to the Worker as sole primary here — it's under
-            // our own control, already proven reliable, and its own
-            // OkHttp timeouts (6s connect / 10s read) cap the worst case
-            // per row. v2 is intentionally NOT wired into this hot path
-            // until its uptime/cold-start behavior is confirmed; it can
-            // be re-added as a genuine parallel race (not try-then-
-            // fallback) once that's verified, same as resolveSaavnStreamUrl
-            // keeps it as a secondary attempt for individual song taps
-            // (which only pay that cost once per tap, not 8x on Home).
-            val results = parseSongs(getJsonArrayOrObjectData("$WORKER/result/?query=$encoded&limit=$limit"))
-            val ranked = rankByRelevance(results, query)
-            // Drop obvious non-song uploads (full movies, jukeboxes,
-            // reaction videos etc. — see isLikelySong) before ranking is
-            // final. Fails open: if filtering would wipe out the whole
-            // result set (e.g. the user is deliberately searching for
-            // "bollywood jukebox"), keep the unfiltered results rather
-            // than showing nothing — an imperfect result beats an empty
-            // screen.
-            val filtered = ranked.filter { isLikelySong(it) }
-            if (filtered.isNotEmpty()) filtered else ranked
-        }
-        if (songs.isNotEmpty()) {
-            NetworkResilience.EdgeCache.put(cacheKey, songs, ttlMs = 60_000)
-        }
-        return songs
-    }
-
-    /**
-     * Re-scores raw search results against the query text so an exact or
-     * near-exact title match always lands above a loosely-related result
-     * the backend happened to rank higher — the "algorithm" layer search
-     * was missing (previously just showed results in whatever order
-     * Saavn/the Worker returned them).
-     *
-     * Scoring, highest first: exact title match (100) > title starts
-     * with query (85) > every query word present in title (70) > exact
-     * artist match, e.g. searching an artist's name directly (55) > every
-     * query word present in artist (45) > title contains the query as a
-     * substring (30) > most query words present across title+artist —
-     * catches typos/partial words like "arjit" for "Arijit" (15) > no
-     * textual match at all, i.e. backend-only "related" result (0). Ties
-     * keep the original backend order (stable sort) so same-tier results
-     * don't get needlessly shuffled.
-     */
-    private fun rankByRelevance(songs: List<Song>, query: String): List<Song> {
-        val q = query.trim().lowercase()
-        if (q.isEmpty()) return songs
-        val queryWords = q.split(Regex("\\s+")).filter { it.isNotBlank() }
-
-        fun score(song: Song): Int {
-            val title = song.title.lowercase()
-            val artist = song.artist.lowercase()
-            val titleWordHits = queryWords.count { w -> title.split(Regex("\\s+")).any { it.startsWith(w) || w.startsWith(it) } }
-            return when {
-                title == q -> 100
-                title.startsWith(q) -> 85
-                queryWords.isNotEmpty() && queryWords.all { title.contains(it) } -> 70
-                artist == q -> 55
-                queryWords.isNotEmpty() && queryWords.all { artist.contains(it) } -> 45
-                title.contains(q) -> 30
-                queryWords.isNotEmpty() && titleWordHits >= (queryWords.size + 1) / 2 -> 15
-                else -> 0
-            }
-        }
-
-        return songs
-            .withIndex()
-            .sortedWith(compareByDescending<IndexedValue<Song>> { score(it.value) }.thenBy { it.index })
-            .map { it.value }
-    }
-
-    /**
-     * Filters out results that are textually relevant but aren't
-     * actually a single song — this is the accuracy layer that keeps
-     * "Sad Songs" from showing a movie upload or a 2-hour lofi loop just
-     * because the title matched. Two signals, both cheap (no extra
-     * network call):
-     *
-     *   1. Duration: real single tracks land roughly 45s–12min. Below
-     *      that is usually a short/teaser/ringtone; above it is almost
-     *      always a jukebox, full album, "full movie", or a looped
-     *      1-hour mix. `durationSec == 0` (duration unknown, some
-     *      YouTube results omit it) is let through rather than dropped —
-     *      failing closed there would filter out perfectly good songs
-     *      just because the field is missing.
-     *   2. Title keywords: catches the common non-song upload patterns
-     *      text-search alone can't distinguish from a real song title —
-     *      "full movie", "jukebox" (a whole-album playlist video),
-     *      "live concert"/"reaction", "episode", "trailer".
-     */
-    private fun isLikelySong(song: Song): Boolean {
-        val duration = song.durationSec
-        if (duration in 1..44) return false
-        if (duration > 720) return false // > 12 minutes
-
-        val title = song.title.lowercase()
-        val junkPhrases = listOf(
-            "full movie", "full video song", "jukebox", "audio jukebox",
-            "live concert", "reaction", "full episode", "trailer",
-            "official trailer", "interview", "making of", "behind the scenes",
-            "compilation", "1 hour loop", "one hour loop", "8d audio mix",
-            "unboxing", "vlog",
-        )
-        if (junkPhrases.any { title.contains(it) }) return false
-
-        return true
-    }
-
-    /** Worker responses come back in one of two shapes depending on
-     *  endpoint/route: {"data": [...]} or a bare [...] array. This also
-     *  records exactly what happened (HTTP code, body snippet, or
-     *  exception) into lastDiagnostic instead of silently swallowing
-     *  failures — the previous version returned an empty JSONArray() on
-     *  every failure path with no way to tell network error apart from
-     *  empty-but-successful response apart from parse failure. */
-    private suspend fun getJsonArrayOrObjectData(url: String): JSONArray {
-        return withContext(Dispatchers.IO) {
+    internal suspend fun getJson(url: String, http: OkHttpClient = client): JSONObject? =
+        withContext(Dispatchers.IO) {
             try {
                 val req = Request.Builder().url(url).build()
-                client.newCall(req).execute().use { resp ->
-                    val code = resp.code
+                http.newCall(req).await().use { resp ->
                     if (!resp.isSuccessful) {
-                        lastDiagnostic = "HTTP $code from $url"
-                        return@withContext JSONArray()
+                        lastDiagnostic = "HTTP ${resp.code} from ${url.substringBefore('?')}"
+                        return@withContext null
                     }
                     val body = resp.body?.string()
                     if (body.isNullOrBlank()) {
-                        lastDiagnostic = "Empty body (HTTP $code) from $url"
-                        return@withContext JSONArray()
+                        lastDiagnostic = "Empty body from ${url.substringBefore('?')}"
+                        return@withContext null
                     }
-                    val trimmed = body.trimStart()
-                    val array = if (trimmed.startsWith("[")) {
-                        JSONArray(body)
-                    } else {
-                        val obj = JSONObject(body)
-                        // Worker's /result/ route replies as
-                        // {"success":true,"data":{"results":[...]}}, so check
-                        // data.results before falling back to a bare
-                        // data:[...] shape (used by other worker routes).
-                        obj.optJSONObject("data")?.optJSONArray("results")
-                            ?: obj.optJSONArray("data")
-                            ?: JSONArray()
-                    }
-                    if (array.length() == 0) {
-                        lastDiagnostic = "Parsed 0 items. Body snippet: " +
-                            body.take(200)
-                    } else {
-                        lastDiagnostic = "OK: ${array.length()} items"
-                    }
-                    array
+                    JSONObject(body)
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                lastDiagnostic = "Exception: ${e.javaClass.simpleName}: ${e.message}"
-                JSONArray()
+                lastDiagnostic = "${e.javaClass.simpleName}: ${e.message}"
+                null
             }
+        }
+
+    // ── Search ──────────────────────────────────────────────────────────
+
+    /** YouTube Music search (Worker) raced against native NewPipe search.
+     *  Results are cached briefly so re-typing a query is instant. */
+    suspend fun search(query: String, limit: Int = 25): List<Song> {
+        val q = query.trim()
+        if (q.isEmpty()) return emptyList()
+        val cacheKey = "search:${q.lowercase()}:$limit"
+        NetworkResilience.EdgeCache.get<List<Song>>(cacheKey)?.let { return it }
+
+        val songs = raceSearch(q, limit)
+        if (songs.isNotEmpty()) {
+            NetworkResilience.EdgeCache.put(cacheKey, songs, ttlMs = SEARCH_CACHE_TTL_MS)
+        }
+        return songs
+    }
+
+    private suspend fun raceSearch(query: String, limit: Int): List<Song> {
+        val winner = CompletableDeferred<List<Song>>()
+        val primary = ioScope.launch {
+            val r = searchYtMusic(query, limit)
+            if (r.isNotEmpty()) winner.complete(r)
+        }
+        val secondary = ioScope.launch {
+            // Give the Worker a head start; go native at once if it already failed.
+            withTimeoutOrNull(SEARCH_HEDGE_MS) { primary.join() }
+            if (winner.isCompleted) return@launch
+            val r = searchNative(query, limit)
+            if (r.isNotEmpty()) winner.complete(r)
+        }
+        ioScope.launch {
+            primary.join()
+            secondary.join()
+            winner.complete(emptyList())
+        }
+        try {
+            return winner.await()
+        } finally {
+            primary.cancel()
+            secondary.cancel()
         }
     }
 
-    // Each section has a POOL of queries instead of one fixed query — every
-    // homeSections() call picks a different one per section, so "Bollywood
-    // Hits" isn't the literal same 15 songs every time the user opens the
-    // app or hits refresh. Pools stay on-topic per row (no query bleed
-    // between "Love Songs" and "Party Mix") so the row's title still makes
-    // sense no matter which query in its pool got picked.
+    /** Worker route the phone app uses as its primary search source. Shape:
+     *  {success, data:{results:[{videoId,title,artist,album,image,duration}]}} */
+    private suspend fun searchYtMusic(query: String, limit: Int): List<Song> {
+        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
+        val json = getJson("$WORKER/api/yt-music-search?query=$encoded&limit=$limit", fastClient)
+            ?: return emptyList()
+        if (!json.optBoolean("success", false)) {
+            lastDiagnostic = "yt-music-search success=false"
+            return emptyList()
+        }
+        val arr = json.optJSONObject("data")?.optJSONArray("results") ?: return emptyList()
+        val out = ArrayList<Song>(arr.length())
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val id = o.optString("videoId")
+            val title = clean(o.optString("title"))
+            if (id.isBlank() || title.isBlank()) continue
+            out.add(
+                Song(
+                    id = id,
+                    title = title,
+                    artist = clean(o.optString("artist")).ifBlank { "Unknown Artist" },
+                    albumArtUrl = thumb(o.optString("image")),
+                    durationSec = o.optInt("duration", 0),
+                    source = SongSource.YOUTUBE,
+                )
+            )
+        }
+        return out
+    }
+
+    /** Fallback: NewPipe's own YouTube search, no Worker involved. */
+    private suspend fun searchNative(query: String, limit: Int): List<Song> =
+        withContext(Dispatchers.IO) {
+            try {
+                YoutubeStreamResolver.ensureInit()
+                val extractor = ServiceList.YouTube.getSearchExtractor(query)
+                extractor.fetchPage()
+                val songs = extractor.initialPage.items
+                    .filterIsInstance<StreamInfoItem>()
+                    .mapNotNull { item ->
+                        val id = videoIdOf(item.url)
+                        if (id.isBlank()) return@mapNotNull null
+                        Song(
+                            id = id,
+                            title = clean(item.name ?: ""),
+                            artist = clean(item.uploaderName ?: "").removeSuffix(" - Topic")
+                                .ifBlank { "Unknown Artist" },
+                            albumArtUrl = thumb(item.thumbnails.lastOrNull()?.url ?: ""),
+                            durationSec = item.duration.toInt().coerceAtLeast(0),
+                            source = SongSource.YOUTUBE,
+                        )
+                    }
+                    .filter { it.title.isNotBlank() }
+                val filtered = songs.filter { isLikelySong(it) }
+                (if (filtered.isNotEmpty()) filtered else songs).take(limit)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w("AurumApi", "native search failed: ${e.message}")
+                emptyList()
+            }
+        }
+
+    private fun videoIdOf(url: String): String = try {
+        android.net.Uri.parse(url).getQueryParameter("v") ?: ""
+    } catch (_: Exception) {
+        ""
+    }
+
+    /** Drops obvious non-song uploads. Only used on native-search results —
+     *  plain YouTube search has no concept of "is this a song". */
+    private fun isLikelySong(song: Song): Boolean {
+        val d = song.durationSec
+        if (d in 1..44 || d > 720) return false
+        val t = song.title.lowercase()
+        return JUNK_PHRASES.none { t.contains(it) }
+    }
+
+    private val JUNK_PHRASES = listOf(
+        "full movie", "full video song", "jukebox", "live concert", "reaction",
+        "full episode", "trailer", "interview", "making of", "behind the scenes",
+        "compilation", "1 hour", "one hour", "unboxing", "vlog",
+    )
+
+    private fun clean(s: String): String = s
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#039;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .trim()
+
+    /** Same idea as the phone's _searchThumb: ask Google's image CDN for a
+     *  card-sized thumbnail instead of the tiny default. */
+    private fun thumb(url: String): String? {
+        if (url.isBlank()) return null
+        return url.replace(Regex("=w\\d+-h\\d+.*$"), "=w300-h300-l85-rj")
+    }
+
+    // ── Home ────────────────────────────────────────────────────────────
+
+    // Each section has a POOL of queries — every load picks a different one
+    // per section, so the rows aren't the literal same songs every time.
     private val sectionPools: List<Pair<String, List<String>>> = listOf(
         "Trending Now" to listOf(
-            "trending 2026", "trending songs this week", "viral songs 2026", "top trending hindi",
+            "trending songs this week", "viral songs 2026", "top trending hindi", "trending songs 2026",
         ),
         "New Releases" to listOf(
             "new songs 2026", "latest bollywood releases", "new hindi songs this month", "fresh releases 2026",
@@ -285,16 +272,16 @@ object AurumApi {
             "top hits playlist", "popular hindi songs", "most played songs", "hit songs collection",
         ),
         "Top Charts" to listOf(
-            "top charts", "billboard hindi hits", "top 50 bollywood", "chartbusters 2026",
+            "top charts", "top 50 bollywood", "chartbusters 2026", "top hindi songs 2026",
         ),
         "Bollywood Hits" to listOf(
             "bollywood hits", "bollywood blockbuster songs", "bollywood dance hits", "bollywood romantic hits",
         ),
         "Love Songs" to listOf(
-            "love songs hits", "romantic hindi songs", "unplugged love songs", "80s 90s romantic hits",
+            "love songs hits", "romantic hindi songs", "unplugged love songs", "90s romantic hits",
         ),
         "Party Mix" to listOf(
-            "party dance hits", "dj remix songs", "wedding dance songs", "club hits hindi",
+            "party dance hits", "wedding dance songs", "club hits hindi", "bollywood party songs",
         ),
         "Punjabi Beats" to listOf(
             "punjabi songs 2026", "punjabi bhangra hits", "new punjabi songs",
@@ -307,252 +294,83 @@ object AurumApi {
         ),
     )
 
-    /** Fresh, randomized every call: which sections show up, what order,
-     *  and which query within each section's pool — all reshuffled.
-     *
-     *  8 of the 10 pools render per load (was 5) — a premium music TV
-     *  home page reads as sparse with only 5 rows; 8 fills the screen
-     *  properly without pulling in literally every pool (which would
-     *  make near-duplicate/thin categories more likely to show up
-     *  together). Each row now fetches 18 songs (was 12) so scrolling a
-     *  row doesn't run out after a few seconds of D-pad holds. Fetches
-     *  still capped at concurrency 3 — more rows means more total calls,
-     *  but not more *simultaneous* ones, so this doesn't add CPU/network
-     *  pressure at any single instant, just spreads more of it over the
-     *  same throttle.
-     *
-     *  Each row mixes sources: search() returns Saavn results, then
-     *  [mixInYoutube] blends in a handful of YouTube results for the
-     *  same query and interleaves them — so a "Bollywood Hits" row is
-     *  genuinely both YT + Saavn, not just Saavn with a YouTube-shaped
-     *  fallback that only kicks in on failure. */
-    suspend fun homeSections(): List<Pair<String, List<Song>>> = coroutineScope {
-        val chosenPools = sectionPools.shuffled().take(8)
-        val semaphore = Semaphore(3)
-        val deferred = chosenPools.map { (title, pool) ->
-            async {
-                semaphore.withPermit {
-                    val query = pool.random()
-                    val saavnSongs = search(query, limit = 18)
-                    val mixed = mixInYoutube(saavnSongs, query)
-                    title to mixed
+    /** Streams Home rows as each search finishes (3 at a time). Which
+     *  sections appear and which query each uses is reshuffled every call.
+     *  A row that fails is simply skipped; an empty flow means everything
+     *  failed and the UI shows its error/retry state. */
+    fun homeRows(): Flow<HomeRow> = channelFlow {
+        val chosen = sectionPools.shuffled().take(HOME_ROW_COUNT)
+        val gate = Semaphore(HOME_CONCURRENCY)
+        chosen.forEachIndexed { index, (title, pool) ->
+            launch {
+                gate.withPermit {
+                    val songs = runCatching { search(pool.random(), HOME_ROW_SONGS) }
+                        .getOrDefault(emptyList())
+                    if (songs.isNotEmpty()) send(HomeRow(index, title, songs))
                 }
             }
         }
-        deferred.map { it.await() }.filter { (_, songs) -> songs.isNotEmpty() }
     }
 
-    /**
-     * Blends a few YouTube results for [query] into [saavnSongs] so home
-     * rows aren't single-source. Interleaved roughly every 3rd slot
-     * (Saavn, Saavn, Saavn, YouTube, ...) rather than appended at the end
-     * — an all-YouTube tail would never be seen on rows the user doesn't
-     * scroll all the way through. Capped at 4 YouTube tracks per row to
-     * keep this cheap: it's one extra network call per row, not per
-     * song, and YouTube resolve is heavier than Saavn's direct
-     * downloadUrl (see resolveStreamUrl), so keeping the ratio Saavn-
-     * majority keeps typical taps cheap to resolve.
-     *
-     * Results are passed through [isLikelySong] first — YouTube search is
-     * pure text-match with no concept of "is this actually a song", so
-     * without filtering, a "Sad Songs" row could just as easily pull in
-     * a 40-minute reaction video, a full-movie upload, or a live stream
-     * that happens to share keywords with the query. That's exactly the
-     * kind of wrong-category result a premium row can't have.
-     */
-    private suspend fun mixInYoutube(saavnSongs: List<Song>, query: String): List<Song> {
-        if (saavnSongs.isEmpty()) return saavnSongs
-        val ytSongs = runCatching { searchYoutubeFallback(query, limit = 8) }
-            .getOrDefault(emptyList())
-            .filter { isLikelySong(it) }
-            .take(4)
-        if (ytSongs.isEmpty()) return saavnSongs
+    // ── Stream resolution ───────────────────────────────────────────────
 
-        val result = mutableListOf<Song>()
-        var ytIndex = 0
-        saavnSongs.forEachIndexed { i, song ->
-            result.add(song)
-            if ((i + 1) % 3 == 0 && ytIndex < ytSongs.size) {
-                result.add(ytSongs[ytIndex])
-                ytIndex++
-            }
-        }
-        // Any leftover YT songs that didn't get an interleave slot (short
-        // Saavn list) still get appended, so the mix isn't lost entirely.
-        while (ytIndex < ytSongs.size) {
-            result.add(ytSongs[ytIndex])
-            ytIndex++
-        }
-        return result
+    // songId -> YouTube video id, for songs whose own id isn't one.
+    private val matchedVideoIds = object : LinkedHashMap<String, String>(32, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean =
+            size > 200
     }
 
-    /**
-     * Resolves a playable stream URL right before playback. This is the
-     * exact spot that used to cause "click nahi ho raha" — if Saavn's
-     * downloadUrl was missing/expired, this returned null and PlayerManager
-     * would silently no-op with nothing playing and no error shown.
-     *
-     * Now: (1) each attempt is retried with backoff instead of giving up
-     * on one flaky response, and (2) if the song's own source fails after
-     * retries, we fall back to searching YouTube for the same
-     * title+artist and resolving THAT instead of giving up — so almost
-     * every tap results in something playing.
-     */
-    suspend fun resolveStreamUrl(song: Song): String? = withContext(Dispatchers.IO) {
-        val direct = NetworkResilience.retryWithBackoff(
-            maxAttempts = 2,
-            isSuccess = { it: String? -> !it.isNullOrBlank() },
-        ) {
-            resolveDirect(song)
-        }
-        if (!direct.isNullOrBlank()) return@withContext direct
-
-        // Direct source failed twice — fall back to YouTube search using
-        // title + artist, same as the phone app's fallback chain. This is
-        // what turns a dead Saavn link into a still-playable tap instead
-        // of a silent no-op.
-        lastDiagnostic = "Primary source failed for '${song.title}', falling back to YouTube"
-        val fallbackQuery = "${song.title} ${song.artist}".trim()
-        val ytResults = runCatching { searchYoutubeFallback(fallbackQuery) }.getOrNull()
-        val ytSong = ytResults?.firstOrNull() ?: return@withContext null
-        resolveDirect(ytSong.copy(source = SongSource.YOUTUBE))
-    }
-
-    private suspend fun resolveDirect(song: Song): String? = when (song.source) {
-        SongSource.YOUTUBE -> {
-            val proxyUrl = "$WORKER/api/yt-proxy?id=${song.id}"
-            val probeOk = try {
-                val probe = Request.Builder()
-                    .url(proxyUrl)
-                    .header("Range", "bytes=0-255")
-                    .build()
-                client.newCall(probe).execute().use { r -> r.isSuccessful || r.code == 206 }
-            } catch (_: Exception) { false }
-            if (probeOk) {
-                proxyUrl
-            } else {
-                val streamJson = getJson("$WORKER/api/yt-stream?id=${song.id}")
-                streamJson?.optString("url")?.takeIf { it.isNotBlank() }
-            }
-        }
-        SongSource.SAAVN -> resolveSaavnStreamUrl(song) ?: song.streamUrl
-        SongSource.LOCAL -> song.streamUrl
-    }
-
-    /**
-     * FIX (2026-07-19): Ported from the phone app's _saavnStreamById +
-     * _extractSaavnStreamUrl + _proxiedSaavnUrl (api_service.dart). Two
-     * bugs in the old TV-only version this replaces:
-     *
-     *   1. It only ever called the Worker's /api/songs route, which the
-     *      phone app treats as a last-resort fallback, not the primary —
-     *      the real primary (jiosaavn-op v2) wasn't wired in at all.
-     *   2. It read `downloadUrl` as a single string
-     *      (`data?.optString("downloadUrl")`), but the real API shape is
-     *      an ARRAY of {quality, url} objects — optString on a JSONArray
-     *      silently returns "", so this was failing on every real
-     *      response shape and falling straight to YouTube every time.
-     *
-     * On top of that, raw saavncdn.com URLs are hotlink/referer-protected
-     * and won't play directly — they must be wrapped through the
-     * Worker's /stream-proxy route first (same as the phone app), or
-     * ExoPlayer just gets a silent connection failure/stall with no clue
-     * why.
-     */
-    private suspend fun resolveSaavnStreamUrl(song: Song): String? {
-        // 1. jiosaavn-op v2 — direct id lookup, matches phone app's primary path.
-        val v2Url = getJson("$SAAVN_V2/api/songs/${song.id}")
-        if (v2Url != null && v2Url.optBoolean("success", false)) {
-            val data = v2Url.opt("data")
-            val songData = when (data) {
-                is JSONArray -> data.optJSONObject(0)
-                is JSONObject -> data
-                else -> null
-            }
-            val extracted = songData?.let { extractSaavnDownloadUrl(it) }
-            if (!extracted.isNullOrBlank()) return extracted
-        }
-
-        // 2. Worker fallback (last-resort, matches phone app's tertiary pillar).
-        val json = getJson("$WORKER/api/songs?ids=${song.id}")
-        val data = json?.optJSONArray("data")?.optJSONObject(0)
-        return data?.let { extractSaavnDownloadUrl(it) }
-    }
-
-    /** Reads the real downloadUrl shape — an array of {quality, url}
-     *  objects, not a plain string — and picks the best available
-     *  quality, falling back to the last (usually highest-quality) entry
-     *  if none of the preferred qualities are present. Every returned
-     *  URL is proxy-wrapped if it's a saavncdn.com link. */
-    private fun extractSaavnDownloadUrl(song: JSONObject): String? {
-        val downloads = song.optJSONArray("downloadUrl")
-        if (downloads != null && downloads.length() > 0) {
-            // Prefer highest quality available; 320kbps > 160kbps > 96kbps > 48kbps.
-            val qualityOrder = listOf("320kbps", "160kbps", "96kbps", "48kbps")
-            for (q in qualityOrder) {
-                for (i in 0 until downloads.length()) {
-                    val d = downloads.optJSONObject(i) ?: continue
-                    if (d.optString("quality") == q) {
-                        val url = d.optString("url")
-                        if (url.startsWith("http")) return proxiedSaavnUrl(url)
+    /** The YouTube video id that plays [song], or null if it can't be played
+     *  on TV (e.g. a file that only exists on the phone). */
+    suspend fun youtubeIdFor(song: Song): String? {
+        return when (song.source) {
+            SongSource.YOUTUBE -> song.id.takeIf { it.isNotBlank() }
+            SongSource.LOCAL -> null
+            SongSource.SAAVN -> {
+                synchronized(matchedVideoIds) { matchedVideoIds[song.id] }
+                    ?: matchOnYoutube(song)?.also {
+                        synchronized(matchedVideoIds) { matchedVideoIds[song.id] = it }
                     }
-                }
-            }
-            // No preferred quality matched — last entry is usually highest bitrate.
-            val last = downloads.optJSONObject(downloads.length() - 1)
-            val lastUrl = last?.optString("url")
-            if (!lastUrl.isNullOrBlank() && lastUrl.startsWith("http")) {
-                return proxiedSaavnUrl(lastUrl)
             }
         }
-        val direct = song.optString("media_url").ifBlank { song.optString("streamUrl") }
-        if (direct.isNotBlank() && direct.startsWith("http")) return proxiedSaavnUrl(direct)
-        return null
     }
 
-    /** Matches the phone app's _proxiedSaavnUrl: saavncdn.com links are
-     *  hotlink/referer-protected and must go through the Worker's
-     *  stream-proxy route to actually play. Non-Saavn-CDN URLs (already
-     *  proxied, or from a different host) pass through unchanged. */
-    private fun proxiedSaavnUrl(url: String): String {
-        val decoded = java.net.URLDecoder.decode(url, "UTF-8")
-        if (decoded.contains("/stream-proxy?url=") || url.contains("/stream-proxy?url=")) {
-            return decoded
-        }
-        if (decoded.contains("saavncdn.com") || url.contains("saavncdn.com")) {
-            val encoded = java.net.URLEncoder.encode(decoded, "UTF-8")
-            return "$WORKER/stream-proxy?url=$encoded"
-        }
-        return decoded
+    private suspend fun matchOnYoutube(song: Song): String? {
+        val artist = song.artist.takeUnless { it.equals("Unknown", true) || it.equals("Unknown Artist", true) } ?: ""
+        val results = search("${song.title} $artist".trim(), limit = 6)
+        if (results.isEmpty()) return null
+        val sameLength = if (song.durationSec > 0) {
+            results.firstOrNull { it.durationSec > 0 && kotlin.math.abs(it.durationSec - song.durationSec) <= 12 }
+        } else null
+        return (sameLength ?: results.first()).id
     }
 
-    /** Worker's search endpoint is Saavn-first; for the fallback chain we
-     *  need actual YouTube results, so this hits the Worker's YouTube
-     *  search route directly instead of reusing search() (which is
-     *  Saavn-shaped parsing). Empty on any failure — this is itself the
-     *  last-resort path, there's no further fallback beyond it. */
-    private suspend fun searchYoutubeFallback(query: String, limit: Int = 3): List<Song> {
-        val encoded = java.net.URLEncoder.encode(query, "UTF-8")
-        val json = getJson("$WORKER/api/yt-search?query=$encoded&limit=$limit") ?: return emptyList()
-        val arr = json.optJSONArray("data") ?: json.optJSONArray("results") ?: return emptyList()
-        val out = mutableListOf<Song>()
-        for (i in 0 until arr.length()) {
-            val o = arr.optJSONObject(i) ?: continue
-            val id = o.optString("id").ifBlank { o.optString("videoId") }
-            if (id.isBlank()) continue
-            out.add(
-                Song(
-                    id = id,
-                    title = o.optString("title", query),
-                    artist = o.optString("artist").ifBlank { o.optString("channel", "Unknown Artist") },
-                    albumArtUrl = o.optString("thumbnail").ifBlank { null },
-                    durationSec = o.optInt("duration", 0),
-                    source = SongSource.YOUTUBE,
-                )
-            )
-        }
-        return out
+    /** Playable URL for [song] at [quality], or null if every path failed. */
+    suspend fun resolveStream(
+        song: Song,
+        quality: AudioQuality,
+        preferAac: Boolean = false,
+        forceRefresh: Boolean = false,
+    ): ResolvedStream? {
+        val videoId = youtubeIdFor(song) ?: return null
+        return YoutubeStreamResolver.resolve(videoId, quality, preferAac, forceRefresh)
     }
+
+    /** Drops the cached URL for [song] (dead/expired link recovery). */
+    suspend fun invalidateStream(song: Song) {
+        youtubeIdFor(song)?.let { YoutubeStreamResolver.invalidate(it) }
+    }
+
+    /** Warms the URL cache for a song that will probably play next. */
+    fun prefetch(song: Song, quality: AudioQuality) {
+        ioScope.launch {
+            runCatching {
+                youtubeIdFor(song)?.let { YoutubeStreamResolver.prefetch(it, quality) }
+            }
+        }
+    }
+
+    // ── TV <-> phone pairing (unchanged) ────────────────────────────────
 
     data class PairingSession(val code: String, val confirmUrl: String, val expiresInSeconds: Int)
 
@@ -597,63 +415,19 @@ object AurumApi {
             null
         }
     }
+}
 
-    private fun parseSongs(arr: JSONArray): List<Song> {
-        val out = mutableListOf<Song>()
-        for (i in 0 until arr.length()) {
-            val o = arr.optJSONObject(i) ?: continue
-            val id = o.optString("id")
-            if (id.isBlank()) continue
-            val title = o.optString("song")
-                .ifBlank { o.optString("name") }
-                .ifBlank { o.optString("title", "Unknown") }
-            val artist = extractArtist(o)
-            val artUrl = extractArtwork(o)
-            val duration = o.optInt("duration", 0)
-            out.add(
-                Song(
-                    id = id,
-                    title = title,
-                    artist = artist,
-                    albumArtUrl = artUrl,
-                    durationSec = duration,
-                    source = SongSource.SAAVN,
-                )
-            )
+/** Cancellable OkHttp call: cancelling the coroutine cancels the HTTP call,
+ *  so a superseded search/resolve stops using the radio immediately. */
+internal suspend fun Call.await(): Response = suspendCancellableCoroutine { cont ->
+    cont.invokeOnCancellation { runCatching { cancel() } }
+    enqueue(object : Callback {
+        override fun onFailure(call: Call, e: IOException) {
+            if (cont.isActive) cont.resumeWithException(e)
         }
-        return out
-    }
 
-    private fun extractArtist(o: JSONObject): String {
-        val artistsField = o.optJSONObject("artists")
-        val primary = artistsField?.optJSONArray("primary")
-        if (primary != null && primary.length() > 0) {
-            val names = mutableListOf<String>()
-            for (i in 0 until primary.length()) {
-                val a = primary.optJSONObject(i)
-                val name = a?.optString("name")?.takeIf { it.isNotBlank() }
-                if (name != null) names.add(name)
-            }
-            if (names.isNotEmpty()) return names.joinToString(", ")
+        override fun onResponse(call: Call, response: Response) {
+            if (cont.isActive) cont.resume(response) else response.close()
         }
-        return o.optString("primary_artists")
-            .ifBlank { o.optString("singers") }
-            .ifBlank { o.optString("artist") }
-            .ifBlank { "Unknown Artist" }
-    }
-
-    private fun extractArtwork(o: JSONObject): String? {
-        val imageField = o.opt("image")
-        if (imageField is JSONArray && imageField.length() > 0) {
-            val last = imageField.optJSONObject(imageField.length() - 1)
-            return last?.optString("url") ?: last?.optString("link")
-        }
-        // aurum-worker's /result/ route sends "image" as a plain string
-        // (already resized to 500x500), not the phone app's array-of-sizes
-        // shape — handle that directly instead of falling through to the
-        // artwork/thumbnail fields, which the worker never sets.
-        if (imageField is String && imageField.isNotBlank()) return imageField
-        return o.optString("artwork").ifBlank { null }
-            ?: o.optString("thumbnail").ifBlank { null }
-    }
+    })
 }

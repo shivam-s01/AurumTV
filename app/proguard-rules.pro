@@ -51,3 +51,28 @@
 -keepclasseswithmembers class com.aurum.musictv.** {
     kotlinx.serialization.KSerializer serializer(...);
 }
+
+# ── NewPipeExtractor + NewValve (native YouTube stream resolution) ──────
+# Same rules as the phone app: the extractor parses live YouTube responses
+# with reflection-heavy JSON/HTML code (nanojson, jsoup, protobuf-lite,
+# Rhino for signature deciphering); stripping/renaming "unused" members
+# breaks extraction only in RELEASE builds, with no compile-time warning.
+-keep class org.schabi.newpipe.** { *; }
+-keep class com.github.shalva97.** { *; }
+-keep class io.github.shalva97.** { *; }
+-dontwarn org.schabi.newpipe.**
+-keep class org.jsoup.** { *; }
+-dontwarn org.jsoup.**
+-keep class com.grack.nanojson.** { *; }
+-dontwarn com.grack.nanojson.**
+-keep class org.mozilla.javascript.** { *; }
+-dontwarn org.mozilla.javascript.**
+-dontwarn java.beans.**
+-dontwarn javax.script.**
+-dontwarn com.google.protobuf.**
+-keep class com.google.protobuf.** { *; }
+
+# OkHttp (used by NewValve's Downloader and by AurumApi)
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-keep class okhttp3.** { *; }

@@ -117,7 +117,9 @@ android {
 }
 
 dependencies {
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+    // NewPipeExtractor needs the NIO desugaring variant (java.nio.file /
+    // java.time on API < 26/33) — same artifact the phone app uses.
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs_nio:2.1.4")
 
     // ── Compose for TV ───────────────────────────────────────────────────
     // Replaces Leanback. androidx.tv:tv-material gives Spotify-style
@@ -179,6 +181,17 @@ dependencies {
     implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
     implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
 
+    // ── Native YouTube stream resolution (same stack as the phone app) ──
+    // NewValve is a thin OkHttp Downloader wrapper (initNewPipe()) around
+    // NewPipeExtractor. Its own transitive extractor pin is stale (causes
+    // "page needs to be reloaded" / SABR "no audio streams" failures), so
+    // that submodule group is excluded and the current extractor release
+    // is declared + forced below — exactly the phone app's setup.
+    implementation("com.github.shalva97:NewValve:1.5") {
+        exclude(group = "com.github.TeamNewPipe.NewPipeExtractor")
+    }
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.3")
+
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
 
@@ -188,4 +201,12 @@ dependencies {
     // live to a change, without SharedPrefs' main-thread disk read risk
     // on a slow TV box's flash storage.
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+}
+
+// Guarantees NewValve's stale transitive NewPipeExtractor never wins over
+// the version declared above (same enforcement as the phone app).
+configurations.all {
+    resolutionStrategy {
+        force("com.github.TeamNewPipe:NewPipeExtractor:v0.26.3")
+    }
 }

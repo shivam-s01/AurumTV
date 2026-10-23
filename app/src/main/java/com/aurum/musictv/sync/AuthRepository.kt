@@ -70,6 +70,7 @@ object AuthRepository {
                 idToken = googleIdTokenCredential.idToken
                 provider = Google
             }
+            SyncRepository.clearSessionCache()
             null
         } catch (e: Exception) {
             "Sign-in failed: ${e.message}"
@@ -87,6 +88,7 @@ object AuthRepository {
                 this.idToken = idToken
                 provider = Google
             }
+            SyncRepository.clearSessionCache()
             null
         } catch (e: Exception) {
             "Sign-in failed: ${e.message}"
@@ -95,5 +97,6 @@ object AuthRepository {
 
     suspend fun signOut() {
         runCatching { SupabaseClientProvider.auth.signOut() }
+        SyncRepository.clearSessionCache()
     }
 }

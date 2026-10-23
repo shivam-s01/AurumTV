@@ -2,9 +2,7 @@ package com.aurum.musictv.ui.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.aurum.musictv.data.model.PlaybackStateRow
 import com.aurum.musictv.data.model.Song
-import com.aurum.musictv.data.model.toSong
 import com.aurum.musictv.data.remote.AurumApi
 import com.aurum.musictv.sync.AuthRepository
 import com.aurum.musictv.sync.SyncRepository
@@ -12,37 +10,22 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class HomeUiState(
     val isLoading: Boolean = true,
     val greetingName: String? = null,
-    /** Google avatar URL when signed in, null otherwise -> ProfileAvatar
-     *  falls back to a default icon. Sign-in is optional; this is purely
-     *  cosmetic and never gates anything. */
     val avatarUrl: String? = null,
+    /** Last song played on any device (phone or TV) — from the shared history. */
     val continueListening: Song? = null,
-    /** Songs shown in the auto-rotating hero carousel at the top of Home
-     *  — one random pick per section (so it spans categories, not just
-     *  one row) rather than always the same fixed song. Recomputed each
-     *  [HomeViewModel.loadHome] call, not on every recomposition. */
+    /** Hero carousel: one random pick per section, filled as rows arrive. */
     val heroSongs: List<Song> = emptyList(),
-    /** All browse rows (Trending, New Releases, Made For You, ...) in the
-     *  order the API returns them — HomeScreen renders each as its own
-     *  row, so adding a section server-side needs no client change. */
+    /** Browse rows, in display order; they appear one by one as they load. */
     val sections: List<Pair<String, List<Song>>> = emptyList(),
     val recentlyPlayed: List<Song> = emptyList(),
     val likedSongs: List<Song> = emptyList(),
-    val isPremium: Boolean = false,
-    /** Non-null while the OTHER device (mobile) is actively playing
-     *  something TV isn't currently playing — drives the
-     *  "Playing on phone" resume banner. */
-    val remoteNowPlaying: PlaybackStateRow? = null,
-    /** Non-null when a load finished with zero sections AND the Worker
-     *  call itself failed/errored (as opposed to genuinely returning no
-     *  results) — drives an explicit "couldn't load, retry" state on Home
-     *  instead of silently showing a blank screen forever. Cleared on the
-     *  next successful load. */
+    /** Set only when a load finished with zero rows because the calls failed. */
     val loadError: String? = null,
 )
 
@@ -51,15 +34,6 @@ class HomeViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
-    // HomeViewModel is retained for the whole Activity lifetime (that's
-    // how viewModel() works), but the two polling loops below only make
-    // sense while Home is the screen actually on screen — the "Playing
-    // on phone" banner and premium-flag refresh are both things the user
-    // can only see on Home. Without this flag they kept firing a network
-    // request every 8s/30s even while the user was sitting on Player,
-    // Search, Library, or Settings — pure wasted radio/CPU wakeups on a
-    // 1GB box for a screen that isn't even visible. MainActivity flips
-    // this via setHomeVisible() on every screen change.
     private var isHomeVisible = true
 
     fun setHomeVisible(visible: Boolean) {
@@ -68,19 +42,13 @@ class HomeViewModel : ViewModel() {
 
     init {
         loadHome()
-        observeRemotePlayback()
-        observePremium()
+        loadUserData()
         autoRefreshPeriodically()
     }
 
-    /** TV has no swipe-to-refresh gesture (D-pad only), so instead of
-     *  relying on the user to manually trigger refresh(), Home reloads
-     *  itself every 10 minutes while it's the active screen — the
-     *  randomized query pools in AurumApi.homeSections() mean each reload
-     *  actually surfaces different songs, not just a repeat network call.
-     *  Skipped entirely while Home isn't visible — no point refreshing
-     *  browse rows the user isn't looking at; it'll refresh next time
-     *  they land back on Home instead (see setHomeVisible). */
+    /** TV has no pull-to-refresh, so Home reloads its browse rows itself
+     *  every 10 minutes while visible (query pools are randomized, so it
+     *  surfaces different songs). */
     private fun autoRefreshPeriodically() {
         viewModelScope.launch {
             while (true) {
@@ -90,100 +58,77 @@ class HomeViewModel : ViewModel() {
         }
     }
 
+    /** Browse rows stream in: the first row is on screen after one search
+     *  round-trip instead of waiting for every row. User data loads in
+     *  parallel (see [loadUserData]) and never blocks them. */
     private fun loadHome() {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(
-                isLoading = true,
+            _uiState.update {
+                it.copy(
+                    isLoading = true,
+                    loadError = null,
+                    greetingName = AuthRepository.displayName,
+                    avatarUrl = AuthRepository.avatarUrl,
+                )
+            }
+
+            val rows = mutableListOf<com.aurum.musictv.data.remote.HomeRow>()
+            val failure = runCatching {
+                AurumApi.homeRows().collect { row ->
+                    rows.add(row)
+                    val sorted = rows.sortedBy { it.index }
+                    _uiState.update { state ->
+                        // Hero: keep what's already shown, add one pick from each new row.
+                        val hero = if (state.heroSongs.size < 6 && row.songs.isNotEmpty()) {
+                            state.heroSongs + row.songs.random()
+                        } else state.heroSongs
+                        state.copy(
+                            sections = sorted.map { it.title to it.songs },
+                            heroSongs = hero,
+                            isLoading = false,
+                        )
+                    }
+                }
+            }.exceptionOrNull()
+
+            _uiState.update { state ->
+                state.copy(
+                    isLoading = false,
+                    loadError = when {
+                        rows.isNotEmpty() -> null
+                        failure != null -> "Couldn't reach server: ${failure.message ?: "unknown error"}"
+                        else -> "No songs loaded. ${AurumApi.lastDiagnostic}"
+                    },
+                )
+            }
+        }
+    }
+
+    /** Favorites + history from the phone's own sync tables, both at once. */
+    private fun loadUserData() {
+        viewModelScope.launch {
+            val recent = runCatching { SyncRepository.fetchRecentlyPlayed(limit = 30) }.getOrDefault(emptyList())
+            _uiState.update { it.copy(recentlyPlayed = recent, continueListening = recent.firstOrNull()) }
+        }
+        viewModelScope.launch {
+            val liked = runCatching { SyncRepository.fetchLikedSongs() }.getOrDefault(emptyList())
+            _uiState.update { it.copy(likedSongs = liked.take(40)) }
+        }
+    }
+
+    fun refresh() {
+        loadHome()
+        loadUserData()
+    }
+
+    /** Called when returning from the Auth screen (sign-in/out/dismiss). */
+    fun refreshAuthState() {
+        _uiState.update {
+            it.copy(
                 greetingName = AuthRepository.displayName,
                 avatarUrl = AuthRepository.avatarUrl,
             )
-
-            // Uses the same homeSections() the phone app's home screen is
-            // built from — same Worker call, same content, not a
-            // reinvented query. Rendered generically by HomeScreen so
-            // adding a row server-side needs no client change.
-            //
-            // FIX: previously this used getOrDefault(emptyList()) and threw
-            // away the actual exception — a dead Worker, DNS failure, or
-            // timeout looked exactly the same as "genuinely no results":
-            // a blank Home with no way to tell why. Now the failure reason
-            // (plus AurumApi.lastDiagnostic, which records the raw
-            // HTTP/exception detail from whichever section call failed) is
-            // kept and surfaced so Home can show a real error + retry
-            // instead of silently staying empty forever.
-            val sectionsResult = runCatching { AurumApi.homeSections() }
-            val sections = sectionsResult.getOrDefault(emptyList())
-            val loadError = when {
-                sectionsResult.isFailure ->
-                    "Couldn't reach server: ${sectionsResult.exceptionOrNull()?.message ?: "unknown error"}"
-                sections.isEmpty() -> "No songs loaded. ${AurumApi.lastDiagnostic}"
-                else -> null
-            }
-
-            // One random song per section -> the hero carousel spans
-            // different categories each time Home loads, instead of
-            // always showing the same first song from the first row.
-            val heroSongs = sections
-                .mapNotNull { (_, songs) -> songs.randomOrNull() }
-                .shuffled()
-                .take(6)
-
-            val playbackState = SyncRepository.fetchPlaybackState()
-            val continueListening = playbackState?.songData?.toSong()
-
-            val recent = runCatching { SyncRepository.fetchRecentlyPlayed() }.getOrDefault(emptyList())
-            val liked = runCatching { SyncRepository.fetchLikedSongs() }.getOrDefault(emptyList())
-
-            val isPremium = SyncRepository.fetchIsPremium()
-
-            _uiState.value = _uiState.value.copy(
-                isLoading = false,
-                sections = sections,
-                heroSongs = heroSongs,
-                continueListening = continueListening,
-                recentlyPlayed = recent,
-                likedSongs = liked,
-                isPremium = isPremium,
-                loadError = loadError,
-            )
         }
-    }
-
-    /** Listens for mobile pushing a new playback_state row while TV is
-     *  sitting on Home — shows a lightweight "Resume on TV" banner instead
-     *  of silently doing nothing (which is what would happen with zero
-     *  realtime wiring). */
-    private fun observeRemotePlayback() {
-        viewModelScope.launch {
-            SyncRepository.observePlaybackState(viewModelScope, isActive = { isHomeVisible }).collect { row ->
-                if (row.device != "tv") {
-                    _uiState.value = _uiState.value.copy(remoteNowPlaying = row)
-                }
-            }
-        }
-    }
-
-    private fun observePremium() {
-        viewModelScope.launch {
-            SyncRepository.observeIsPremium(viewModelScope, isActive = { isHomeVisible }).collect { premium ->
-                _uiState.value = _uiState.value.copy(isPremium = premium)
-            }
-        }
-    }
-
-    fun dismissRemoteNowPlaying() {
-        _uiState.value = _uiState.value.copy(remoteNowPlaying = null)
-    }
-
-    fun refresh() = loadHome()
-
-    /** Called when returning from the Auth screen (sign-in, sign-out, or
-     *  just dismissed) so the profile icon / greeting reflect the latest
-     *  state without a full home reload. */
-    fun refreshAuthState() {
-        _uiState.value = _uiState.value.copy(
-            greetingName = AuthRepository.displayName,
-            avatarUrl = AuthRepository.avatarUrl,
-        )
+        loadUserData()
     }
 }
