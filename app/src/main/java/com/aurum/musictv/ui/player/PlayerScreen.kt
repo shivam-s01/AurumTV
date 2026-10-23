@@ -209,7 +209,7 @@ private fun LikeButton(liked: Boolean, onClick: () -> Unit) {
                 shape = CircleShape,
             ),
         ),
-        modifier = Modifier.size(52.dp).adaptiveClickable(touchFocusRequester, isTouch),
+        modifier = Modifier.size(52.dp).adaptiveClickable(touchFocusRequester, isTouch, onClick),
     ) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Icon(
@@ -246,7 +246,7 @@ private fun TransportButton(
                 shape = CircleShape,
             ),
         ),
-        modifier = Modifier.size(if (background != null) size + 32.dp else size + 16.dp).adaptiveClickable(touchFocusRequester, isTouch),
+        modifier = Modifier.size(if (background != null) size + 32.dp else size + 16.dp).adaptiveClickable(touchFocusRequester, isTouch, onClick),
     ) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Icon(

@@ -130,7 +130,7 @@ private fun SidebarIcon(destination: NavDestination, selected: Boolean, onClick:
                 shape = RoundedCornerShape(16.dp),
             ),
         ),
-        modifier = Modifier.width(76.dp).adaptiveClickable(touchFocusRequester, isTouch),
+        modifier = Modifier.width(76.dp).adaptiveClickable(touchFocusRequester, isTouch, onClick),
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),

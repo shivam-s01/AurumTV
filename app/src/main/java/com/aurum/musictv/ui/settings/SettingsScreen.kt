@@ -174,7 +174,7 @@ private fun ActionRow(label: String, valueLabel: String, destructive: Boolean = 
     val isTouch = isTouchDevice()
     Surface(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().adaptiveClickable(touchFocusRequester, isTouch),
+        modifier = Modifier.fillMaxWidth().adaptiveClickable(touchFocusRequester, isTouch, onClick),
         shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(0.dp)),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = androidx.compose.ui.graphics.Color.Transparent,
@@ -207,7 +207,7 @@ private fun ToggleRow(label: String, description: String, checked: Boolean, onTo
     val isTouch = isTouchDevice()
     Surface(
         onClick = { onToggle(!checked) },
-        modifier = Modifier.fillMaxWidth().adaptiveClickable(touchFocusRequester, isTouch),
+        modifier = Modifier.fillMaxWidth().adaptiveClickable(touchFocusRequester, isTouch, { onToggle(!checked) }),
         shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(0.dp)),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = androidx.compose.ui.graphics.Color.Transparent,
@@ -273,7 +273,7 @@ private fun ChoiceChip(label: String, selected: Boolean, onClick: () -> Unit) {
     val isTouch = isTouchDevice()
     Surface(
         onClick = onClick,
-        modifier = Modifier.adaptiveClickable(touchFocusRequester, isTouch),
+        modifier = Modifier.adaptiveClickable(touchFocusRequester, isTouch, onClick),
         shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(20.dp)),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = if (selected) AurumColors.Gold else AurumColors.AmoledBgSurface,
@@ -302,7 +302,7 @@ private fun BackChip(onClick: () -> Unit) {
     val isTouch = isTouchDevice()
     Surface(
         onClick = onClick,
-        modifier = Modifier.adaptiveClickable(touchFocusRequester, isTouch),
+        modifier = Modifier.adaptiveClickable(touchFocusRequester, isTouch, onClick),
         shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(8.dp)),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = AurumColors.AmoledBgSurface,

@@ -183,7 +183,7 @@ private fun HomeErrorState(message: String?, onRetry: () -> Unit) {
         )
         androidx.tv.material3.Surface(
             onClick = onRetry,
-            modifier = Modifier.adaptiveClickable(retryFocusRequester, isTouch),
+            modifier = Modifier.adaptiveClickable(retryFocusRequester, isTouch, onRetry),
             shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(6.dp)),
             colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
                 containerColor = AurumColors.Gold,
@@ -289,7 +289,7 @@ private fun HeroCarousel(songs: List<Song>, onPlayClick: (Song) -> Unit) {
     val isTouch = isTouchDevice()
             androidx.tv.material3.Surface(
                 onClick = { onPlayClick(song) },
-                modifier = Modifier.adaptiveClickable(heroPlayFocusRequester, isTouch),
+                modifier = Modifier.adaptiveClickable(heroPlayFocusRequester, isTouch, { onPlayClick(song) }),
                 shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(
                     shape = RoundedCornerShape(8.dp),
                 ),
@@ -368,7 +368,7 @@ private fun TopBar(
     val isTouch = isTouchDevice()
             androidx.tv.material3.Surface(
                 onClick = onSearchClick,
-                modifier = Modifier.adaptiveClickable(searchFocusRequester, isTouch),
+                modifier = Modifier.adaptiveClickable(searchFocusRequester, isTouch, onSearchClick),
                 shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(
                     shape = RoundedCornerShape(6.dp),
                 ),
@@ -406,7 +406,7 @@ private fun TopBar(
                         shape = androidx.compose.foundation.shape.CircleShape,
                     ),
                 ),
-                modifier = Modifier.size(40.dp).adaptiveClickable(settingsFocusRequester, isTouch),
+                modifier = Modifier.size(40.dp).adaptiveClickable(settingsFocusRequester, isTouch, onSettingsClick),
             ) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("\u2699", color = AurumColors.TextSecondary, fontSize = 18.sp)
@@ -442,7 +442,7 @@ private fun ProfileAvatar(avatarUrl: String?, onClick: () -> Unit) {
                 shape = androidx.compose.foundation.shape.CircleShape,
             ),
         ),
-        modifier = Modifier.size(40.dp).adaptiveClickable(avatarFocusRequester, isTouch),
+        modifier = Modifier.size(40.dp).adaptiveClickable(avatarFocusRequester, isTouch, onClick),
     ) {
         androidx.compose.foundation.layout.Box(
             modifier = Modifier.fillMaxSize(),

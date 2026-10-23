@@ -156,7 +156,7 @@ private fun TabChip(label: String, selected: Boolean, onClick: () -> Unit) {
     val isTouch = isTouchDevice()
     Surface(
         onClick = onClick,
-        modifier = Modifier.adaptiveClickable(touchFocusRequester, isTouch),
+        modifier = Modifier.adaptiveClickable(touchFocusRequester, isTouch, onClick),
         shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(20.dp)),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = if (selected) AurumColors.Gold else AurumColors.AmoledBgSurface,

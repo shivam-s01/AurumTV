@@ -1,8 +1,7 @@
 package com.aurum.musictv.ui.util
 
 import android.content.pm.PackageManager
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -57,19 +56,34 @@ fun isTouchDevice(): Boolean {
  *
  * Usage in a @Composable:
  *   val focusRequester = rememberClickFocusRequester()
- *   Surface(onClick = onClick, modifier = Modifier.adaptiveClickable(focusRequester, isTouch)...)
+ *   Surface(onClick = onClick, modifier = Modifier.adaptiveClickable(focusRequester, isTouch, onClick)...)
  */
-fun Modifier.adaptiveClickable(focusRequester: FocusRequester, isTouch: Boolean): Modifier =
+fun Modifier.adaptiveClickable(
+    focusRequester: FocusRequester,
+    isTouch: Boolean,
+    onTap: () -> Unit,
+): Modifier =
     if (!isTouch) {
         this
     } else {
+        // FIX: tv-material's Surface(onClick) never fires from a finger tap
+        // (it only reacts to D-pad select on a focused item) — the old
+        // "just request focus on touch-down" version left every button
+        // dead on phones/tablets while scrolling still worked. On a
+        // touchscreen we now fire the click ourselves on a real tap
+        // (detectTapGestures' onTap: no movement past touch-slop, so
+        // dragging a row to scroll never triggers it) and also move focus
+        // so the focus highlight follows the finger. detectTapGestures
+        // without onPress does not consume the down event, so parent
+        // LazyRow/LazyColumn drag-scrolling is unaffected. On a TV
+        // (isTouch == false) this stays a no-op: pure D-pad behavior.
         this
             .focusRequester(focusRequester)
-            .pointerInput(Unit) {
-                awaitEachGesture {
-                    awaitFirstDown(requireUnconsumed = false)
-                    focusRequester.requestFocus()
-                }
+            .pointerInput(onTap) {
+                detectTapGestures(onTap = {
+                    runCatching { focusRequester.requestFocus() }
+                    onTap()
+                })
             }
     }
 

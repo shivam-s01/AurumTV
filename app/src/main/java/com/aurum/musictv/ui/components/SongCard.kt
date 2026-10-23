@@ -70,7 +70,7 @@ fun SongCard(
                 .size(size)
                 .graphicsLayer { scaleX = scale; scaleY = scale }
                 .onFocusChanged { isFocused = it.isFocused }
-                .adaptiveClickable(touchFocusRequester, isTouch),
+                .adaptiveClickable(touchFocusRequester, isTouch, onClick),
             shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(
                 shape = RoundedCornerShape(10.dp),
             ),
