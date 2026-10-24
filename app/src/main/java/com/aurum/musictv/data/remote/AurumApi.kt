@@ -413,6 +413,32 @@ object AurumApi {
         return rankRelated(seed, pool + extra, exclude).take(limit)
     }
 
+    private const val MIX_PER_ARTIST = 8
+
+    /** The "Up Next" mix button: YouTube Music's real radio for [seed]
+     *  (Innertube automix, see [YtmRadio]) topped up with the NewPipe mix when
+     *  Innertube is thin or unreachable. Up to [target] songs, never [seed]
+     *  or anything in [exclude]; YouTube's order is kept. */
+    suspend fun upNextMix(seed: Song, exclude: Set<String>, target: Int = 70): List<Song> {
+        val videoId = youtubeIdFor(seed)
+        var pool: List<Song> = emptyList()
+        if (videoId != null) {
+            val key = "mix:$videoId:$target"
+            pool = NetworkResilience.EdgeCache.get<List<Song>>(key)
+                ?: YtmRadio.fetch(videoId, target + 15).also {
+                    if (it.isNotEmpty()) NetworkResilience.EdgeCache.put(key, it, RELATED_CACHE_TTL_MS)
+                }
+        }
+        var ranked = rankRelated(seed, pool, exclude, MIX_PER_ARTIST)
+        if (ranked.size < target) {
+            val taken = HashSet<String>(exclude).apply { ranked.forEach { add(it.id) } }
+            val more = runCatching { related(seed, exclude = taken, limit = target - ranked.size + 10) }
+                .getOrDefault(emptyList())
+            ranked = (ranked + more).distinctBy { it.id }
+        }
+        return ranked.take(target)
+    }
+
     private fun fetchRadioBlocking(videoId: String): List<Song> {
         YoutubeStreamResolver.ensureInit()
         val out = ArrayList<Song>(40)
@@ -473,7 +499,12 @@ object AurumApi {
     /** YouTube's order is kept (that IS the algorithm); this only drops what
      *  would make the queue worse: non-songs, alternate versions, the same
      *  song twice from different channels, and one artist hogging the list. */
-    private fun rankRelated(seed: Song, pool: List<Song>, exclude: Set<String>): List<Song> {
+    private fun rankRelated(
+        seed: Song,
+        pool: List<Song>,
+        exclude: Set<String>,
+        maxPerArtist: Int = MAX_PER_ARTIST,
+    ): List<Song> {
         val seenTitles = HashSet<String>()
         seenTitles += normTitle(seed.title, seed.id)
         val perArtist = HashMap<String, Int>()
@@ -488,7 +519,7 @@ object AurumApi {
             val artist = s.artist.lowercase()
             if (artist != "unknown artist") {
                 val n = perArtist[artist] ?: 0
-                if (n >= MAX_PER_ARTIST) continue
+                if (n >= maxPerArtist) continue
                 perArtist[artist] = n + 1
             }
             out += s

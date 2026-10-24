@@ -574,26 +574,31 @@ class PlayerManager(private val context: Context) {
     }
 
     /** Songs YouTube's radio suggests after [song], minus what is queued. */
-    private suspend fun fetchFresh(song: Song): List<Song> {
+    private suspend fun fetchFresh(song: Song, target: Int = UPNEXT_TARGET): List<Song> {
         val have = _uiState.value.queue.mapTo(HashSet()) { it.id }
-        return runCatching { AurumApi.related(song, exclude = have, limit = 25) }
+        return runCatching { AurumApi.upNextMix(song, exclude = have, target = target) }
             .getOrDefault(emptyList())
     }
 
-    /** Keeps at least a few songs queued after the current one (Autoplay on):
-     *  "Up next" is filled in advance, the next stream is prefetched, and the
-     *  end of the queue never waits on a network call. */
+    /** Keeps "Up next" stocked (Autoplay on): whenever fewer than
+     *  [UPNEXT_REFILL_BELOW] songs are left it is topped up to ~[UPNEXT_TARGET]
+     *  with songs picked for the current song, silently and in advance, so the
+     *  end of the queue never waits on a network call. The person's own queue
+     *  is never reordered; new songs are only added at the end. */
     private fun ensureUpcoming(index: Int) {
         if (!settings.autoplay) return
         val s = _uiState.value
-        if (s.queue.size - index - 1 >= 3) return
+        val upcoming = s.queue.size - index - 1
+        // Already well stocked: nothing to fetch (one fetch per ~45 songs).
+        if (upcoming >= UPNEXT_REFILL_BELOW) return
         val song = s.queue.getOrNull(index) ?: return
+        val want = (UPNEXT_TARGET - upcoming).coerceAtLeast(10)
         // Restart for the newest song: a quick skip must not leave the new
         // song without a topped-up queue because the old job was still waiting.
         upcomingJob?.cancel()
         upcomingJob = scope.launch {
             delay(2_500) // let the current song's stream start first
-            val fresh = fetchFresh(song)
+            val fresh = fetchFresh(song, want)
             if (fresh.isEmpty()) return@launch
             _uiState.update { st ->
                 if (st.currentSong?.id != song.id) st
@@ -667,5 +672,11 @@ class PlayerManager(private val context: Context) {
     private companion object {
         /** Songs auto-skipped in a row when none can be resolved. */
         const val MAX_AUTO_SKIPS = 3
+
+        /** Up Next is kept at about this many songs, filled automatically. */
+        const val UPNEXT_TARGET = 70
+
+        /** Refill only when fewer than this many are left (one fetch per ~45 songs). */
+        const val UPNEXT_REFILL_BELOW = 25
     }
 }

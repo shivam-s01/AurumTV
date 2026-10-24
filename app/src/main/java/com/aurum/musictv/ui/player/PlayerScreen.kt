@@ -383,7 +383,7 @@ private fun QueuePanel(
             .padding(top = 28.dp),
     ) {
         Text(
-            "Queue",
+            "Up next",
             color = AurumColors.TextPrimary,
             fontSize = 22.sp,
             fontWeight = FontWeight.Bold,
