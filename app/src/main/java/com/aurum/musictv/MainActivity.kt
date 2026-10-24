@@ -43,6 +43,8 @@ import com.aurum.musictv.data.model.Song
 import com.aurum.musictv.player.PlayerManager
 import com.aurum.musictv.sync.AuthRepository
 import com.aurum.musictv.ui.auth.AuthScreen
+import com.aurum.musictv.ui.components.BannerData
+import com.aurum.musictv.ui.components.TopBanner
 import com.aurum.musictv.ui.home.HomeScreen
 import com.aurum.musictv.ui.home.HomeViewModel
 import com.aurum.musictv.ui.library.LibraryScreen
@@ -117,6 +119,7 @@ private fun AurumApp(playerManager: PlayerManager) {
     var returnTo by remember { mutableStateOf<Screen>(Screen.Home) }
     val homeViewModel: HomeViewModel = viewModel()
     val homeListState = rememberLazyListState()
+    var banner by remember { mutableStateOf<BannerData?>(null) }
 
     // Only the "is there a current song" bit is observed here — the full
     // PlayerUiState ticks every second and must not recompose the whole app.
@@ -140,6 +143,7 @@ private fun AurumApp(playerManager: PlayerManager) {
     fun play(song: Song, queue: List<Song>) {
         val startIndex = queue.indexOf(song).coerceAtLeast(0)
         playerManager.playQueue(queue, startIndex)
+        homeViewModel.onSongPlayed(song)
         if (settings.openPlayerOnTap) openPlayer()
     }
 
@@ -176,6 +180,19 @@ private fun AurumApp(playerManager: PlayerManager) {
                             onSignedIn = {
                                 homeViewModel.refreshAuthState()
                                 screen = Screen.Home
+                                val name = AuthRepository.displayName
+                                banner = BannerData(
+                                    title = if (name != null) "Signed in as $name" else "Signed in",
+                                    subtitle = "Your Astra library is now synced to this TV",
+                                    name = name,
+                                    avatarUrl = AuthRepository.avatarUrl,
+                                )
+                            },
+                            onSignedOut = {
+                                banner = BannerData(
+                                    title = "Signed out",
+                                    subtitle = "Music still works - sign in anytime from the profile icon",
+                                )
                             },
                             onDismiss = {
                                 homeViewModel.refreshAuthState()
@@ -201,7 +218,10 @@ private fun AurumApp(playerManager: PlayerManager) {
                             onSongClick = { song, results -> play(song, results) },
                         )
 
-                        is Screen.Player -> PlayerScreen(playerManager = playerManager)
+                        is Screen.Player -> PlayerScreen(
+                            playerManager = playerManager,
+                            onBack = { screen = returnTo },
+                        )
 
                         is Screen.Settings -> SettingsScreen(onBack = { screen = Screen.Home })
                     }
@@ -216,6 +236,11 @@ private fun AurumApp(playerManager: PlayerManager) {
         }
 
         PlaybackNoticeHost(playerManager)
+        TopBanner(
+            data = banner,
+            onDone = { banner = null },
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
     }
 }
 

@@ -370,6 +370,132 @@ object AurumApi {
         }
     }
 
+    // ── Recommendations (YouTube's own radio) ───────────────────────────
+    //
+    // "Up next" comes from YouTube itself: the Mix / radio playlist of the
+    // song that is playing (RD<videoId>, the same list YouTube Music builds
+    // for "Start radio"), topped up with the watch-page "related" feed. That
+    // is YouTube's real recommendation output for THIS song — we then only
+    // clean it (songs only, no duplicate versions, no 5-songs-in-a-row from
+    // one artist) so the queue sounds like a playlist, not a search page.
+
+    private const val RELATED_CACHE_TTL_MS = 15 * 60_000L
+    private const val MAX_PER_ARTIST = 5
+
+    private val BRACKETS = Regex("[\\(\\[\\{].*?[\\)\\]\\}]")
+    private val TITLE_NOISE = Regex("\\b(official|video|audio|lyrical|lyrics|full song|song|hd|4k|music)\\b")
+    private val NON_ALNUM = Regex("[^\\p{L}\\p{N}]+")
+
+    // Alternate versions are skipped unless the playing song is one itself.
+    private val VARIANT_PHRASES = listOf(
+        "slowed", "reverb", "8d audio", "nightcore", "sped up", "mashup", "bass boosted", "karaoke", "status",
+    )
+
+    /** Songs to play after [seed], best first. Never contains [seed] or any id
+     *  in [exclude]. Empty only if every source failed. */
+    suspend fun related(seed: Song, exclude: Set<String> = emptySet(), limit: Int = 25): List<Song> {
+        val videoId = youtubeIdFor(seed)
+        var pool: List<Song> = emptyList()
+        if (videoId != null) {
+            val key = "related:$videoId"
+            pool = NetworkResilience.EdgeCache.get<List<Song>>(key)
+                ?: withContext(Dispatchers.IO) { fetchRadioBlocking(videoId) }.also {
+                    if (it.isNotEmpty()) NetworkResilience.EdgeCache.put(key, it, RELATED_CACHE_TTL_MS)
+                }
+        }
+        val ranked = rankRelated(seed, pool, exclude)
+        if (ranked.size >= 6) return ranked.take(limit)
+
+        // Radio unavailable/too thin: same-artist search keeps music going.
+        val artist = seed.artist.takeUnless { it.isBlank() || it.equals("Unknown Artist", true) }
+        val extra = runCatching { search(if (artist != null) "$artist songs" else seed.title, 20) }
+            .getOrDefault(emptyList())
+        return rankRelated(seed, pool + extra, exclude).take(limit)
+    }
+
+    private fun fetchRadioBlocking(videoId: String): List<Song> {
+        YoutubeStreamResolver.ensureInit()
+        val out = ArrayList<Song>(40)
+        try {
+            val mix = ServiceList.YouTube.getPlaylistExtractor(
+                "https://www.youtube.com/watch?v=$videoId&list=RD$videoId"
+            )
+            mix.fetchPage()
+            mix.initialPage.items.filterIsInstance<StreamInfoItem>()
+                .mapNotNullTo(out) { streamItemToSong(it) }
+        } catch (e: Exception) {
+            Log.w("AurumApi", "mix failed: ${e.message}")
+        }
+        if (out.size < 12) {
+            try {
+                val ex = ServiceList.YouTube.getStreamExtractor("https://www.youtube.com/watch?v=$videoId")
+                ex.fetchPage()
+                ex.relatedItems?.items?.filterIsInstance<StreamInfoItem>()
+                    ?.mapNotNullTo(out) { streamItemToSong(it) }
+            } catch (e: Exception) {
+                Log.w("AurumApi", "related failed: ${e.message}")
+            }
+        }
+        return out.distinctBy { it.id }
+    }
+
+    private fun streamItemToSong(item: StreamInfoItem): Song? {
+        val id = videoIdOf(item.url)
+        val title = clean(item.name ?: "")
+        if (id.isBlank() || title.isBlank()) return null
+        return Song(
+            id = id,
+            title = title,
+            artist = clean(item.uploaderName ?: "").removeSuffix(" - Topic").ifBlank { "Unknown Artist" },
+            albumArtUrl = thumb(cardThumb(item.thumbnails)),
+            durationSec = item.duration.toInt().coerceAtLeast(0),
+            source = SongSource.YOUTUBE,
+        )
+    }
+
+    /** Smallest thumbnail that is still sharp on a card (>= 240 px tall) —
+     *  the biggest one is a 1280px image nobody needs on a 1 GB box. */
+    private fun cardThumb(images: List<org.schabi.newpipe.extractor.Image>?): String {
+        if (images.isNullOrEmpty()) return ""
+        val pick = images.filter { it.height >= 240 }.minByOrNull { it.height } ?: images.last()
+        return pick.url ?: ""
+    }
+
+    private fun normTitle(title: String, fallback: String): String {
+        val n = title.lowercase()
+            .replace(BRACKETS, " ")
+            .replace(TITLE_NOISE, " ")
+            .replace(NON_ALNUM, " ")
+            .trim()
+        return n.ifBlank { fallback }
+    }
+
+    /** YouTube's order is kept (that IS the algorithm); this only drops what
+     *  would make the queue worse: non-songs, alternate versions, the same
+     *  song twice from different channels, and one artist hogging the list. */
+    private fun rankRelated(seed: Song, pool: List<Song>, exclude: Set<String>): List<Song> {
+        val seenTitles = HashSet<String>()
+        seenTitles += normTitle(seed.title, seed.id)
+        val perArtist = HashMap<String, Int>()
+        val seedTitle = seed.title.lowercase()
+        val out = ArrayList<Song>(pool.size)
+        for (s in pool) {
+            if (s.id == seed.id || s.id in exclude) continue
+            if (!isLikelySong(s)) continue
+            val t = s.title.lowercase()
+            if (VARIANT_PHRASES.any { t.contains(it) && !seedTitle.contains(it) }) continue
+            if (!seenTitles.add(normTitle(s.title, s.id))) continue
+            val artist = s.artist.lowercase()
+            if (artist != "unknown artist") {
+                val n = perArtist[artist] ?: 0
+                if (n >= MAX_PER_ARTIST) continue
+                perArtist[artist] = n + 1
+            }
+            out += s
+        }
+        return out
+    }
+
     // ── TV <-> phone pairing (unchanged) ────────────────────────────────
 
     data class PairingSession(val code: String, val confirmUrl: String, val expiresInSeconds: Int)

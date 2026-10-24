@@ -1,6 +1,19 @@
 package com.aurum.musictv.ui.search
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items as rowItems
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.tv.material3.Border
+import androidx.tv.material3.ClickableSurfaceDefaults
+import androidx.tv.material3.Surface
+import com.aurum.musictv.settings.SettingsStore
+import com.aurum.musictv.ui.util.adaptiveClickable
+import com.aurum.musictv.ui.util.isTouchDevice
+import com.aurum.musictv.ui.util.rememberClickFocusRequester
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,6 +65,10 @@ fun SearchScreen(
     val state by viewModel.uiState.collectAsState()
     var query by remember { mutableStateOf("") }
     var isFieldFocused by remember { mutableStateOf(false) }
+    val context = LocalContext.current.applicationContext
+    val scope = rememberCoroutineScope()
+    val recents by remember { SettingsStore.observeRecentSearches(context) }
+        .collectAsState(initial = emptyList())
 
     // Live search: 250ms after the user stops typing — tight enough to
     // feel instant (this is the "top-level algorithm, ekdam premium"
@@ -101,6 +118,14 @@ fun SearchScreen(
         }
 
         Column(modifier = Modifier.padding(top = 24.dp)) {
+            // Empty box: typing on a remote is slow, so offer one-click
+            // searches (your last ones first, then popular ones).
+            if (query.isEmpty()) {
+                if (recents.isNotEmpty()) {
+                    ChipSection("Recent searches", recents) { query = it }
+                }
+                ChipSection("Popular searches", POPULAR_SEARCHES) { query = it }
+            }
             if (state.isLoading) {
                 Text("Searching…", color = AurumColors.Gold, fontSize = 14.sp)
             } else if (state.results.isEmpty() && query.isNotEmpty()) {
@@ -124,11 +149,64 @@ fun SearchScreen(
                 items(state.results, key = { it.id }) { song ->
                     SongCard(
                         song = song,
-                        onClick = { onSongClick(song, state.results) },
+                        onClick = {
+                            scope.launch { SettingsStore.addRecentSearch(context, query) }
+                            onSongClick(song, state.results)
+                        },
                         size = androidx.compose.ui.unit.Dp.Unspecified,
                     )
                 }
             }
         }
+    }
+}
+
+private val POPULAR_SEARCHES = listOf(
+    "Arijit Singh", "Punjabi hits 2026", "Bollywood party", "Lofi chill",
+    "90s romantic", "AP Dhillon", "Sad songs hindi", "Workout hits",
+)
+
+@Composable
+private fun ChipSection(title: String, items: List<String>, onPick: (String) -> Unit) {
+    Text(
+        title,
+        color = AurumColors.TextSecondary,
+        fontSize = 14.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(top = 8.dp),
+    )
+    LazyRow(
+        contentPadding = PaddingValues(vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        rowItems(items, key = { it }) { label -> QueryChip(label) { onPick(label) } }
+    }
+}
+
+@Composable
+private fun QueryChip(label: String, onClick: () -> Unit) {
+    val focus = rememberClickFocusRequester()
+    val isTouch = isTouchDevice()
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.adaptiveClickable(focus, isTouch, onClick),
+        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(20.dp)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = AurumColors.AmoledBgSurface,
+            focusedContainerColor = AurumColors.AmoledBgElevated,
+        ),
+        border = ClickableSurfaceDefaults.border(
+            focusedBorder = Border(
+                border = androidx.compose.foundation.BorderStroke(2.dp, AurumColors.Gold),
+                shape = RoundedCornerShape(20.dp),
+            ),
+        ),
+    ) {
+        Text(
+            label,
+            color = AurumColors.TextPrimary,
+            fontSize = 14.sp,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+        )
     }
 }

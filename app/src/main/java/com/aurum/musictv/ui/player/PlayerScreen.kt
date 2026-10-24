@@ -1,6 +1,21 @@
 package com.aurum.musictv.ui.player
 
 import androidx.compose.foundation.background
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.filled.QueueMusic
+import com.aurum.musictv.data.model.Song
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -75,11 +90,46 @@ import com.aurum.musictv.ui.theme.AurumColors
  * navigation (you could press the wrong one and not know it).
  */
 @Composable
-fun PlayerScreen(playerManager: PlayerManager) {
+fun PlayerScreen(playerManager: PlayerManager, onBack: () -> Unit) {
     val state by playerManager.uiState.collectAsState()
-    val song = state.currentSong ?: return
+    val song = state.currentSong
+    if (song == null) {
+        // Nothing to show (e.g. app restarted): never leave a blank screen.
+        LaunchedEffect(Unit) { onBack() }
+        return
+    }
+
+    var showQueue by remember { mutableStateOf(false) }
+    // Back closes the Queue panel first, then (next press) the player.
+    BackHandler(enabled = showQueue) { showQueue = false }
+
+    // D-pad users land on Play/Pause right away (pause/resume = one click).
+    val playFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        delay(150)
+        runCatching { playFocus.requestFocus() }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        // Ambient background: the same art, dimmed (no blur: cheap on weak GPUs).
+        AsyncImage(
+            model = com.aurum.musictv.ui.util.bigArt(song.albumArtUrl),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize().graphicsLayer { alpha = 0.22f },
+            contentScale = ContentScale.Crop,
+        )
+        Box(
+            modifier = Modifier.fillMaxSize().background(
+                Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), AurumColors.AmoledBg)),
+            ),
+        )
+
+        // Way out of the full player (Back on the remote does the same).
+        BackPill(
+            onClick = onBack,
+            modifier = Modifier.align(Alignment.TopStart).padding(start = 32.dp, top = 24.dp),
+        )
+
         Row(
             modifier = Modifier.fillMaxSize().padding(48.dp),
             horizontalArrangement = Arrangement.spacedBy(48.dp),
@@ -162,6 +212,7 @@ fun PlayerScreen(playerManager: PlayerManager) {
                             size = 40.dp,
                             tint = AurumColors.AmoledBg,
                             background = AurumColors.Gold,
+                            focusRequester = playFocus,
                             onClick = { playerManager.togglePlayPause() },
                         )
                     }
@@ -204,6 +255,14 @@ fun PlayerScreen(playerManager: PlayerManager) {
                         active = state.sleepMinutes > 0,
                         onClick = { playerManager.cycleSleepTimer() },
                     )
+                    Box(modifier = Modifier.padding(start = 12.dp)) {
+                        ModeButton(
+                            icon = Icons.Filled.QueueMusic,
+                            label = "Queue",
+                            active = showQueue,
+                            onClick = { showQueue = !showQueue },
+                        )
+                    }
                 }
 
                 state.queue.getOrNull(state.currentIndex + 1)?.let { next ->
@@ -217,6 +276,15 @@ fun PlayerScreen(playerManager: PlayerManager) {
                     )
                 }
             }
+        }
+
+        if (showQueue) {
+            QueuePanel(
+                queue = state.queue,
+                currentIndex = state.currentIndex,
+                onPlay = { playerManager.playAt(it) },
+                modifier = Modifier.align(Alignment.CenterEnd),
+            )
         }
     }
 }
@@ -288,6 +356,129 @@ private fun SeekBar(
                     .clip(RoundedCornerShape(4.dp))
                     .background(if (focused) AurumColors.GoldLight else AurumColors.Gold),
             )
+        }
+    }
+}
+
+/** Right-hand "Up next" list (Spotify TV style). Text rows only - no images,
+ *  so a long auto-extended queue costs next to nothing on a 1 GB box. */
+@Composable
+private fun QueuePanel(
+    queue: List<Song>,
+    currentIndex: Int,
+    onPlay: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = currentIndex.coerceAtLeast(0))
+    val currentFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        delay(150)
+        runCatching { currentFocus.requestFocus() }
+    }
+    Column(
+        modifier = modifier
+            .width(440.dp)
+            .fillMaxHeight()
+            .background(AurumColors.AmoledBgCard.copy(alpha = 0.97f))
+            .padding(top = 28.dp),
+    ) {
+        Text(
+            "Queue",
+            color = AurumColors.TextPrimary,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+        )
+        LazyColumn(
+            state = listState,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            itemsIndexed(queue, key = { i, s -> "$i:${s.id}" }) { i, song ->
+                QueueRow(
+                    song = song,
+                    current = i == currentIndex,
+                    requester = if (i == currentIndex) currentFocus else null,
+                    onClick = { onPlay(i) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun QueueRow(song: Song, current: Boolean, requester: FocusRequester?, onClick: () -> Unit) {
+    val touchRequester = rememberClickFocusRequester()
+    val isTouch = isTouchDevice()
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(10.dp)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = if (current) AurumColors.GoldDark.copy(alpha = 0.22f) else Color.Transparent,
+            focusedContainerColor = AurumColors.AmoledBgElevated,
+        ),
+        border = ClickableSurfaceDefaults.border(
+            focusedBorder = Border(
+                border = androidx.compose.foundation.BorderStroke(2.dp, AurumColors.Gold),
+                shape = RoundedCornerShape(10.dp),
+            ),
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (requester != null && !isTouch) Modifier.focusRequester(requester) else Modifier)
+            .adaptiveClickable(touchRequester, isTouch, onClick),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Text(
+                text = song.title,
+                color = if (current) AurumColors.Gold else AurumColors.TextPrimary,
+                fontSize = 15.sp,
+                fontWeight = if (current) FontWeight.SemiBold else FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = song.artist,
+                color = AurumColors.TextSecondary,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun BackPill(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val focusRequester = rememberClickFocusRequester()
+    val isTouch = isTouchDevice()
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(22.dp)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = AurumColors.AmoledBgSurface,
+            focusedContainerColor = AurumColors.AmoledBgElevated,
+        ),
+        border = ClickableSurfaceDefaults.border(
+            focusedBorder = Border(
+                border = androidx.compose.foundation.BorderStroke(2.dp, AurumColors.Gold),
+                shape = RoundedCornerShape(22.dp),
+            ),
+        ),
+        modifier = modifier.adaptiveClickable(focusRequester, isTouch, onClick),
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 10.dp, end = 18.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.KeyboardArrowDown,
+                contentDescription = "Back",
+                tint = AurumColors.TextPrimary,
+                modifier = Modifier.size(24.dp),
+            )
+            Text("Back", color = AurumColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
         }
     }
 }
@@ -370,8 +561,9 @@ private fun TransportButton(
     tint: androidx.compose.ui.graphics.Color,
     onClick: () -> Unit,
     background: androidx.compose.ui.graphics.Color? = null,
+    focusRequester: FocusRequester? = null,
 ) {
-    val touchFocusRequester = rememberClickFocusRequester()
+    val touchFocusRequester = focusRequester ?: rememberClickFocusRequester()
     val isTouch = isTouchDevice()
     Surface(
         onClick = onClick,
@@ -386,7 +578,11 @@ private fun TransportButton(
                 shape = CircleShape,
             ),
         ),
-        modifier = Modifier.size(if (background != null) size + 32.dp else size + 16.dp).adaptiveClickable(touchFocusRequester, isTouch, onClick),
+        modifier = Modifier
+            .size(if (background != null) size + 32.dp else size + 16.dp)
+            // On a TV adaptiveClickable is a no-op, so attach the requester here.
+            .then(if (focusRequester != null && !isTouch) Modifier.focusRequester(focusRequester) else Modifier)
+            .adaptiveClickable(touchFocusRequester, isTouch, onClick),
     ) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Icon(

@@ -31,7 +31,7 @@ import kotlinx.coroutines.launch
  * optional: Back / "Not now" returns to Home and music works without it.
  */
 @Composable
-fun AuthScreen(onSignedIn: () -> Unit, onDismiss: () -> Unit) {
+fun AuthScreen(onSignedIn: () -> Unit, onDismiss: () -> Unit, onSignedOut: () -> Unit = {}) {
     if (!AuthRepository.isSignedIn) {
         QrPairingScreen(onSignedIn = onSignedIn, onDismiss = onDismiss)
         return
@@ -43,7 +43,18 @@ fun AuthScreen(onSignedIn: () -> Unit, onDismiss: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Text("Astra", color = AurumColors.Gold, fontSize = 48.sp, fontWeight = FontWeight.Bold)
+        com.aurum.musictv.ui.components.Avatar(
+            url = AuthRepository.avatarUrl,
+            name = AuthRepository.displayName,
+            size = 96.dp,
+        )
+        Text(
+            "Astra",
+            color = AurumColors.Gold,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(top = 16.dp),
+        )
         Text(
             text = AuthRepository.displayName ?: "Signed in",
             color = AurumColors.TextPrimary,
@@ -60,6 +71,7 @@ fun AuthScreen(onSignedIn: () -> Unit, onDismiss: () -> Unit) {
             AccountButton("Sign out") {
                 scope.launch {
                     AuthRepository.signOut()
+                    onSignedOut()
                     onDismiss()
                 }
             }

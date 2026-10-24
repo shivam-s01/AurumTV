@@ -84,6 +84,17 @@ fun LibraryScreen(
                 selected = state.tab == LibraryTab.PLAYLISTS,
                 onClick = { viewModel.selectTab(LibraryTab.PLAYLISTS) },
             )
+            // One click: play everything in the open list in random order.
+            if (activeList.isNotEmpty() && !showPlaylistList) {
+                TabChip(
+                    label = "Shuffle play",
+                    selected = false,
+                    onClick = {
+                        val mixed = activeList.shuffled()
+                        onSongClick(mixed.first(), mixed)
+                    },
+                )
+            }
         }
 
         when {

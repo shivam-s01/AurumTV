@@ -1,7 +1,21 @@
 package com.aurum.musictv.ui.home
 
-import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.style.TextOverflow
+import kotlinx.coroutines.delay
+import kotlin.math.abs
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -34,6 +48,7 @@ import com.aurum.musictv.ui.util.adaptiveClickable
 import com.aurum.musictv.ui.util.isTouchDevice
 import com.aurum.musictv.ui.util.rememberClickFocusRequester
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
@@ -78,7 +93,7 @@ fun HomeScreen(
         state = listState,
         modifier = Modifier.fillMaxSize().background(AurumColors.AmoledBg),
         contentPadding = PaddingValues(bottom = 48.dp),
-        verticalArrangement = Arrangement.spacedBy(32.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         item {
             Box {
@@ -86,11 +101,13 @@ fun HomeScreen(
                     HeroCarousel(
                         songs = heroSongs,
                         reduceMotion = reduceMotion,
-                        onPlayClick = { song ->
-                            val list = state.continueListening?.let { c -> listOf(c) }
-                                ?: state.sections.firstOrNull()?.second ?: listOf(song)
-                            onSongClick(song, list)
-                        },
+                        continueId = state.continueListening?.id,
+                        // FIX: the queue is the hero list itself and the
+                        // tapped slide is the start index. It used to pass
+                        // the "continue listening" song (or the first row)
+                        // as the queue, so Play started a DIFFERENT song
+                        // (or restarted the same one) and looked dead.
+                        onPlayClick = { song -> onSongClick(song, heroSongs) },
                     )
                 }
                 TopBar(
@@ -112,6 +129,14 @@ fun HomeScreen(
                     onSongClick = { onSongClick(it, listOf(song)) },
                 )
             }
+        }
+
+        items(state.personalRows, key = { "p:" + it.first }) { (title, songs) ->
+            SongRow(
+                title = title,
+                songs = songs,
+                onSongClick = { onSongClick(it, songs) },
+            )
         }
 
         if (state.recentlyPlayed.isNotEmpty()) {
@@ -209,141 +234,216 @@ private fun HomeErrorState(message: String?, onRetry: () -> Unit) {
     }
 }
 
+/** Set once the hero Play button got the very first D-pad focus, so coming
+ *  back to Home later does not steal focus from the sidebar again. */
+private var heroInitialFocusDone = false
+
 /**
- * Auto-rotating hero carousel — cycles through [songs] every 6s with a
- * smooth crossfade (via animateFloatAsState, the same proven pattern
- * SongCard already uses for its focus-scale animation — no new animation
- * API surface introduced). Advances on its own; the user never has to
- * interact with it, matching the "smooth automatic swipe" behavior asked
- * for.
+ * Horizontal hero: text + Play on the left, album art card on the right over
+ * a dimmed copy of the same art. Slides sideways (new slide enters from the
+ * right) every 7 s; remote Right/Left or a finger swipe moves it by hand and
+ * restarts the timer. Only ONE slide is composed at a time and the slide
+ * animation is a draw-phase transform (no recomposition per frame), which is
+ * what keeps it smooth on a 1 GB box. With "Reduce motion" it never moves.
  */
 @Composable
-private fun HeroCarousel(songs: List<Song>, reduceMotion: Boolean, onPlayClick: (Song) -> Unit) {
-    var currentIndex by remember(songs) { mutableStateOf(0) }
+private fun HeroCarousel(
+    songs: List<Song>,
+    reduceMotion: Boolean,
+    continueId: String?,
+    onPlayClick: (Song) -> Unit,
+) {
+    val count = songs.size
+    if (count == 0) return
 
-    LaunchedEffect(songs, reduceMotion) {
-        if (songs.size <= 1 || reduceMotion) return@LaunchedEffect
-        while (true) {
-            kotlinx.coroutines.delay(6000)
-            currentIndex = (currentIndex + 1) % songs.size
-        }
+    var index by remember { mutableIntStateOf(0) }
+    var direction by remember { mutableIntStateOf(1) }
+    val safeIndex = index.coerceIn(0, count - 1)
+    val song = songs[safeIndex]
+
+    fun go(delta: Int) {
+        if (count <= 1) return
+        direction = if (delta >= 0) 1 else -1
+        index = (safeIndex + delta + count) % count
     }
 
-    val song = songs.getOrNull(currentIndex) ?: return
+    // Auto-advance. Keyed on safeIndex, so any manual move restarts the 7 s.
+    LaunchedEffect(safeIndex, count, reduceMotion) {
+        if (count <= 1 || reduceMotion) return@LaunchedEffect
+        delay(7_000)
+        direction = 1
+        index = (safeIndex + 1) % count
+    }
 
-    // Crossfade: alpha resets to 0 whenever currentIndex changes (key =
-    // currentIndex below), then animates up to 1 over 600ms — a real
-    // fade-in on every slide change, not a no-op animation to a constant.
-    var alphaTarget by remember(currentIndex, reduceMotion) { mutableStateOf(if (reduceMotion) 1f else 0f) }
-    LaunchedEffect(currentIndex) { alphaTarget = 1f }
-    val alpha by animateFloatAsState(
-        targetValue = alphaTarget,
-        animationSpec = tween(durationMillis = if (reduceMotion) 0 else 600),
-        label = "heroCrossfade",
-    )
+    // A fresh Animatable per slide starts at +-1 (off to the side) on the very
+    // first frame, so there is no one-frame flash of the new slide in place.
+    val slide = remember(safeIndex) { Animatable(if (reduceMotion) 0f else direction.toFloat()) }
+    LaunchedEffect(slide) {
+        if (slide.value != 0f) slide.animateTo(0f, tween(420, easing = FastOutSlowInEasing))
+    }
+
+    val isTouch = isTouchDevice()
+    val playFocus = rememberClickFocusRequester()
+    LaunchedEffect(Unit) {
+        if (!isTouch && !heroInitialFocusDone) {
+            heroInitialFocusDone = true
+            delay(250)
+            runCatching { playFocus.requestFocus() }
+        }
+    }
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(420.dp),
+            .height(400.dp)
+            .onKeyEvent { ev ->
+                if (ev.type != KeyEventType.KeyDown || count <= 1) return@onKeyEvent false
+                when (ev.key) {
+                    Key.DirectionRight -> { go(1); true }
+                    // Left on the first slide falls through to the sidebar.
+                    Key.DirectionLeft -> if (safeIndex > 0) { go(-1); true } else false
+                    else -> false
+                }
+            }
+            .pointerInput(count, safeIndex) {
+                var total = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = { total = 0f },
+                    onDragCancel = { total = 0f },
+                    onDragEnd = {
+                        if (total < -80f) go(1) else if (total > 80f) go(-1)
+                        total = 0f
+                    },
+                ) { _, amount -> total += amount }
+            },
     ) {
+        // Ambient background: same art, dimmed. Upscaling a 600px image is
+        // the "blur" - free, unlike Modifier.blur.
         coil.compose.AsyncImage(
             model = com.aurum.musictv.ui.util.bigArt(song.albumArtUrl),
             contentDescription = null,
-            modifier = Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha },
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer { alpha = 0.30f * (1f - abs(slide.value)) },
             contentScale = androidx.compose.ui.layout.ContentScale.Crop,
         )
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
-                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                    Brush.horizontalGradient(
                         colors = listOf(
-                            androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.15f),
-                            androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.55f),
-                            AurumColors.AmoledBg,
+                            AurumColors.AmoledBg.copy(alpha = 0.95f),
+                            AurumColors.AmoledBg.copy(alpha = 0.60f),
+                            Color.Transparent,
                         ),
-                        startY = 0f,
                     ),
                 ),
         )
-        Column(
+        Box(
             modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(horizontal = 48.dp, vertical = 28.dp),
-        ) {
-            Text(
-                text = "PLAYING NOW",
-                color = AurumColors.Gold,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                text = song.title,
-                color = AurumColors.TextPrimary,
-                fontSize = 40.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-            Text(
-                text = song.artist,
-                color = AurumColors.TextSecondary,
-                fontSize = 18.sp,
-                modifier = Modifier.padding(top = 4.dp, bottom = 20.dp),
-            )
-            val heroPlayFocusRequester = rememberClickFocusRequester()
-    val isTouch = isTouchDevice()
-            androidx.tv.material3.Surface(
-                onClick = { onPlayClick(song) },
-                modifier = Modifier.adaptiveClickable(heroPlayFocusRequester, isTouch, { onPlayClick(song) }),
-                shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(
-                    shape = RoundedCornerShape(8.dp),
-                ),
-                colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
-                    containerColor = AurumColors.Gold,
-                    focusedContainerColor = AurumColors.GoldLight,
-                ),
-                border = androidx.tv.material3.ClickableSurfaceDefaults.border(
-                    focusedBorder = androidx.tv.material3.Border(
-                        border = androidx.compose.foundation.BorderStroke(2.dp, AurumColors.TextPrimary),
-                        shape = RoundedCornerShape(8.dp),
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, AurumColors.AmoledBg),
+                        startY = 160f,
                     ),
                 ),
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 32.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+        )
+
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = 48.dp, end = 48.dp, top = 76.dp, bottom = 28.dp)
+                .graphicsLayer {
+                    translationX = slide.value * 120.dp.toPx()
+                    alpha = 1f - abs(slide.value) * 0.9f
+                },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(40.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (song.id == continueId) "CONTINUE LISTENING" else "FEATURED",
+                    color = AurumColors.Gold,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = song.title,
+                    color = AurumColors.TextPrimary,
+                    fontSize = 38.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+                Text(
+                    text = song.artist,
+                    color = AurumColors.TextSecondary,
+                    fontSize = 18.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 22.dp),
+                )
+                androidx.tv.material3.Surface(
+                    onClick = { onPlayClick(song) },
+                    modifier = Modifier
+                        .then(if (!isTouch) Modifier.focusRequester(playFocus) else Modifier)
+                        .adaptiveClickable(playFocus, isTouch) { onPlayClick(song) },
+                    shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(
+                        shape = RoundedCornerShape(10.dp),
+                    ),
+                    colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
+                        containerColor = AurumColors.Gold,
+                        focusedContainerColor = AurumColors.GoldLight,
+                    ),
+                    border = androidx.tv.material3.ClickableSurfaceDefaults.border(
+                        focusedBorder = androidx.tv.material3.Border(
+                            border = androidx.compose.foundation.BorderStroke(2.dp, AurumColors.TextPrimary),
+                            shape = RoundedCornerShape(10.dp),
+                        ),
+                    ),
                 ) {
-                    androidx.tv.material3.Icon(
-                        imageVector = Icons.Filled.PlayArrow,
-                        contentDescription = null,
-                        tint = AurumColors.AmoledBg,
-                        modifier = Modifier.size(22.dp),
-                    )
-                    Text("Play", color = AurumColors.AmoledBg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                }
-            }
-            if (songs.size > 1) {
-                Row(
-                    modifier = Modifier.padding(top = 20.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    songs.forEachIndexed { i, _ ->
-                        Box(
-                            modifier = Modifier
-                                .size(if (i == currentIndex) 20.dp else 6.dp, 6.dp)
-                                .clip(RoundedCornerShape(3.dp))
-                                .background(
-                                    if (i == currentIndex) AurumColors.Gold
-                                    else AurumColors.TextMuted,
-                                ),
+                    Row(
+                        modifier = Modifier.padding(horizontal = 34.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        androidx.tv.material3.Icon(
+                            imageVector = Icons.Filled.PlayArrow,
+                            contentDescription = null,
+                            tint = AurumColors.AmoledBg,
+                            modifier = Modifier.size(24.dp),
                         )
+                        Text("Play", color = AurumColors.AmoledBg, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                if (count > 1) {
+                    Row(
+                        modifier = Modifier.padding(top = 22.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        repeat(count) { i ->
+                            Box(
+                                modifier = Modifier
+                                    .size(if (i == safeIndex) 22.dp else 6.dp, 6.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(if (i == safeIndex) AurumColors.Gold else AurumColors.TextMuted),
+                            )
+                        }
                     }
                 }
             }
+            coil.compose.AsyncImage(
+                model = com.aurum.musictv.ui.util.bigArt(song.albumArtUrl),
+                contentDescription = song.title,
+                modifier = Modifier
+                    .size(280.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(AurumColors.AmoledBgSurface),
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            )
         }
     }
 }
@@ -420,7 +520,7 @@ private fun TopBar(
                     Text("\u2699", color = AurumColors.TextSecondary, fontSize = 18.sp)
                 }
             }
-            ProfileAvatar(avatarUrl = avatarUrl, onClick = onProfileClick)
+            ProfileAvatar(avatarUrl = avatarUrl, name = greetingName, onClick = onProfileClick)
         }
     }
 }
@@ -432,7 +532,7 @@ private fun TopBar(
  * require it.
  */
 @Composable
-private fun ProfileAvatar(avatarUrl: String?, onClick: () -> Unit) {
+private fun ProfileAvatar(avatarUrl: String?, name: String?, onClick: () -> Unit) {
     val avatarFocusRequester = rememberClickFocusRequester()
     val isTouch = isTouchDevice()
     androidx.tv.material3.Surface(
@@ -450,27 +550,9 @@ private fun ProfileAvatar(avatarUrl: String?, onClick: () -> Unit) {
                 shape = androidx.compose.foundation.shape.CircleShape,
             ),
         ),
-        modifier = Modifier.size(40.dp).adaptiveClickable(avatarFocusRequester, isTouch, onClick),
+        modifier = Modifier.size(44.dp).adaptiveClickable(avatarFocusRequester, isTouch, onClick),
     ) {
-        androidx.compose.foundation.layout.Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = androidx.compose.ui.Alignment.Center,
-        ) {
-        if (avatarUrl != null) {
-            coil.compose.AsyncImage(
-                model = avatarUrl,
-                contentDescription = "Profile",
-                modifier = Modifier.fillMaxSize().clip(androidx.compose.foundation.shape.CircleShape),
-                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-            )
-        } else {
-            androidx.tv.material3.Text(
-                text = "\uD83D\uDC64",
-                color = AurumColors.TextSecondary,
-                modifier = Modifier,
-            )
-        }
-        }
+        com.aurum.musictv.ui.components.Avatar(url = avatarUrl, name = name, size = 44.dp)
     }
 }
 
@@ -482,10 +564,14 @@ private fun SongRow(title: String, songs: List<Song>, onSongClick: (Song) -> Uni
             color = AurumColors.TextPrimary,
             fontSize = 20.sp,
             fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 48.dp, vertical = 8.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 48.dp, vertical = 4.dp),
         )
+        // Vertical padding: the focused card zooms 12% and LazyRow clips to
+        // its bounds, which used to cut the gold focus ring at top/bottom.
         LazyRow(
-            contentPadding = PaddingValues(horizontal = 48.dp),
+            contentPadding = PaddingValues(horizontal = 48.dp, vertical = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             items(songs, key = { it.id }) { song ->

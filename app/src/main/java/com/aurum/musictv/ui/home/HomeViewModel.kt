@@ -25,6 +25,9 @@ data class HomeUiState(
     val sections: List<Pair<String, List<Song>>> = emptyList(),
     val recentlyPlayed: List<Song> = emptyList(),
     val likedSongs: List<Song> = emptyList(),
+    /** "Because you played X" / "More like Y" — YouTube radio of what the
+     *  person actually listened to (see AurumApi.related). */
+    val personalRows: List<Pair<String, List<Song>>> = emptyList(),
     /** Set only when a load finished with zero rows because the calls failed. */
     val loadError: String? = null,
 )
@@ -114,11 +117,44 @@ class HomeViewModel : ViewModel() {
             }
             val recent = runCatching { SyncRepository.fetchRecentlyPlayed(limit = 30) }.getOrDefault(emptyList())
             _uiState.update { it.copy(recentlyPlayed = recent, continueListening = recent.firstOrNull()) }
+            loadPersonalRows(recent)
         }
         viewModelScope.launch {
             val liked = runCatching { SyncRepository.fetchLikedSongs() }.getOrDefault(emptyList())
             _uiState.update { it.copy(likedSongs = liked.take(40)) }
         }
+    }
+
+    /** Up to two rows built from different artists the person played last,
+     *  one at a time (one network call each) so a 1 GB box never has two
+     *  extractions running just for Home. */
+    private fun loadPersonalRows(recent: List<Song>) {
+        if (recent.isEmpty()) return
+        val seeds = recent.distinctBy { it.artist.lowercase() }.take(2)
+        val seen = recent.mapTo(HashSet()) { it.id }
+        viewModelScope.launch {
+            val rows = ArrayList<Pair<String, List<Song>>>(2)
+            seeds.forEachIndexed { i, seed ->
+                val songs = runCatching { AurumApi.related(seed, exclude = seen, limit = 20) }
+                    .getOrDefault(emptyList())
+                if (songs.size >= 4) {
+                    val title = if (i == 0) "Because you played ${seed.title}" else "More like ${seed.artist}"
+                    rows += title to songs
+                    _uiState.update { it.copy(personalRows = rows.toList()) }
+                }
+            }
+        }
+    }
+
+    private var localSeedLoaded = false
+
+    /** Not signed in (no synced history yet): the first song played in this
+     *  session seeds the same kind of row, so Home still learns right away. */
+    fun onSongPlayed(song: Song) {
+        val state = _uiState.value
+        if (localSeedLoaded || state.personalRows.isNotEmpty() || state.recentlyPlayed.isNotEmpty()) return
+        localSeedLoaded = true
+        loadPersonalRows(listOf(song))
     }
 
     fun refresh() {
@@ -128,12 +164,19 @@ class HomeViewModel : ViewModel() {
 
     /** Called when returning from the Auth screen (sign-in/out/dismiss). */
     fun refreshAuthState() {
+        val signedIn = AuthRepository.isSignedIn
         _uiState.update {
             it.copy(
                 greetingName = AuthRepository.displayName,
                 avatarUrl = AuthRepository.avatarUrl,
+                // Signed out: drop the previous account's rows right away.
+                continueListening = if (signedIn) it.continueListening else null,
+                recentlyPlayed = if (signedIn) it.recentlyPlayed else emptyList(),
+                likedSongs = if (signedIn) it.likedSongs else emptyList(),
+                personalRows = if (signedIn) it.personalRows else emptyList(),
             )
         }
+        localSeedLoaded = false
         loadUserData()
     }
 }

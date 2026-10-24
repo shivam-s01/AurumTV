@@ -90,6 +90,7 @@ class PlayerManager(private val context: Context) {
     private var playJob: Job? = null
     private var prefetchJob: Job? = null
     private var extendJob: Job? = null
+    private var upcomingJob: Job? = null
     private var sleepJob: Job? = null
     private var originalQueue: List<Song>? = null
 
@@ -262,6 +263,26 @@ class PlayerManager(private val context: Context) {
     fun playQueue(songs: List<Song>, startIndex: Int) {
         if (songs.isEmpty()) return
         val index = startIndex.coerceIn(0, songs.lastIndex)
+
+        // Same song already loaded and healthy: keep it playing (resume if
+        // paused) instead of re-resolving and restarting it from 0:00. A
+        // failed / ended / still-resolving song falls through and retries.
+        val now = _uiState.value
+        val c = controller
+        val target = songs[index]
+        if (now.currentSong?.id == target.id && !now.isResolving && now.playbackError == null &&
+            c != null && c.mediaItemCount > 0 &&
+            c.playbackState != Player.STATE_IDLE && c.playbackState != Player.STATE_ENDED
+        ) {
+            // With shuffle on the (already shuffled) queue is kept as is.
+            if (!now.shuffleOn) {
+                _uiState.update { it.copy(queue = songs, currentIndex = index) }
+            }
+            if (!c.isPlaying) c.play()
+            ensureUpcoming(_uiState.value.currentIndex)
+            return
+        }
+
         if (_uiState.value.shuffleOn) {
             // Shuffle stays on across taps: tapped song first, rest shuffled.
             originalQueue = songs
@@ -273,6 +294,11 @@ class PlayerManager(private val context: Context) {
             _uiState.update { it.copy(queue = songs, currentIndex = index) }
             playIndex(index)
         }
+    }
+
+    /** Jump to a song already in the queue (Queue panel in the full player). */
+    fun playAt(index: Int) {
+        if (index in _uiState.value.queue.indices) playIndex(index)
     }
 
     fun toggleShuffle() {
@@ -419,6 +445,7 @@ class PlayerManager(private val context: Context) {
         // same listen, not a new one.
         if (resumeMs == 0L) scope.launch { SyncRepository.logRecentlyPlayed(song) }
         prefetchNext(index)
+        ensureUpcoming(index)
     }
 
     private fun buildMediaItem(song: Song, url: String): MediaItem =
@@ -546,18 +573,49 @@ class PlayerManager(private val context: Context) {
         }
     }
 
-    /** End of queue with Autoplay on: pull more songs by the same artist so
-     *  music never just stops (Spotify-style endless queue). */
-    private fun extendQueueThenPlayNext() {
+    /** Songs YouTube's radio suggests after [song], minus what is queued. */
+    private suspend fun fetchFresh(song: Song): List<Song> {
+        val have = _uiState.value.queue.mapTo(HashSet()) { it.id }
+        return runCatching { AurumApi.related(song, exclude = have, limit = 25) }
+            .getOrDefault(emptyList())
+    }
+
+    /** Keeps at least a few songs queued after the current one (Autoplay on):
+     *  "Up next" is filled in advance, the next stream is prefetched, and the
+     *  end of the queue never waits on a network call. */
+    private fun ensureUpcoming(index: Int) {
         if (!settings.autoplay) return
+        val s = _uiState.value
+        if (s.queue.size - index - 1 >= 3) return
+        val song = s.queue.getOrNull(index) ?: return
+        // Restart for the newest song: a quick skip must not leave the new
+        // song without a topped-up queue because the old job was still waiting.
+        upcomingJob?.cancel()
+        upcomingJob = scope.launch {
+            delay(2_500) // let the current song's stream start first
+            val fresh = fetchFresh(song)
+            if (fresh.isEmpty()) return@launch
+            _uiState.update { st ->
+                if (st.currentSong?.id != song.id) st
+                else {
+                    val have = st.queue.mapTo(HashSet()) { it.id }
+                    st.copy(queue = st.queue + fresh.filter { it.id !in have })
+                }
+            }
+            prefetchNext(_uiState.value.currentIndex)
+        }
+    }
+
+    /** Next pressed (or song ended) at the end of the queue: pull YouTube's
+     *  radio for the current song and continue with it, so music never just
+     *  stops. Autoplay-off is respected by the callers that advance on their
+     *  own; an explicit Next press always works. */
+    private fun extendQueueThenPlayNext() {
         val song = _uiState.value.currentSong ?: return
+        upcomingJob?.cancel()
         if (extendJob?.isActive == true) return
         extendJob = scope.launch {
-            val artist = song.artist.takeUnless { it.isBlank() || it.equals("Unknown Artist", true) }
-            val query = if (artist != null) "$artist songs" else song.title
-            val found = runCatching { AurumApi.search(query, 20) }.getOrDefault(emptyList())
-            val have = _uiState.value.queue.mapTo(HashSet()) { it.id }
-            val fresh = found.filter { it.id !in have }
+            val fresh = fetchFresh(song)
             // The user may have moved on to another song while this loaded.
             if (fresh.isEmpty() || _uiState.value.currentSong?.id != song.id) return@launch
             _uiState.update { it.copy(queue = it.queue + fresh) }
@@ -595,6 +653,7 @@ class PlayerManager(private val context: Context) {
         MediaKeyBridge.onNext = null
         MediaKeyBridge.onPrevious = null
         sleepJob?.cancel()
+        upcomingJob?.cancel()
         // Cancels the ticker, settings collector and any in-flight resolve.
         scope.cancel()
         playerListener?.let { controller?.removeListener(it) }

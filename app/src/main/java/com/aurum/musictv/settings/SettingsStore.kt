@@ -51,6 +51,7 @@ object SettingsStore {
     private val KEY_BASS = stringPreferencesKey("bass_boost")
     private val KEY_VOLUME = stringPreferencesKey("volume_boost")
     private val KEY_REDUCE_MOTION = booleanPreferencesKey("reduce_motion")
+    private val KEY_RECENT_SEARCHES = stringPreferencesKey("recent_searches")
 
     fun observe(context: Context): Flow<AppSettings> =
         context.dataStore.data.map { prefs ->
@@ -110,6 +111,27 @@ object SettingsStore {
 
     suspend fun setReduceMotion(context: Context, enabled: Boolean) {
         context.dataStore.edit { it[KEY_REDUCE_MOTION] = enabled }
+    }
+
+    // ── Recent searches (newest first, max 8, one small string) ──────────
+
+    fun observeRecentSearches(context: Context): Flow<List<String>> =
+        context.dataStore.data
+            .map { p -> p[KEY_RECENT_SEARCHES]?.split('\n')?.filter { it.isNotBlank() } ?: emptyList() }
+            .distinctUntilChanged()
+
+    suspend fun addRecentSearch(context: Context, query: String) {
+        val q = query.trim().replace('\n', ' ')
+        if (q.length < 2) return
+        context.dataStore.edit { p ->
+            val cur = p[KEY_RECENT_SEARCHES]?.split('\n')?.filter { it.isNotBlank() } ?: emptyList()
+            p[KEY_RECENT_SEARCHES] = (listOf(q) + cur.filter { !it.equals(q, ignoreCase = true) })
+                .take(8).joinToString("\n")
+        }
+    }
+
+    suspend fun clearRecentSearches(context: Context) {
+        context.dataStore.edit { it.remove(KEY_RECENT_SEARCHES) }
     }
 
     /** One-off read (callers that don't keep their own collector). */
