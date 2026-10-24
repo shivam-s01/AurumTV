@@ -3,6 +3,7 @@ package com.aurum.musictv.ui.nav
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -27,7 +28,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.sp
+import com.aurum.musictv.R
 import androidx.tv.material3.Border
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.Icon
@@ -82,19 +85,12 @@ fun SidebarNav(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(32.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .background(AurumColors.Gold, CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = "A",
-                color = AurumColors.AmoledBg,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Black,
-            )
-        }
+        // Same Astra icon as the phone app.
+        Image(
+            painter = painterResource(R.drawable.astra_logo),
+            contentDescription = "Astra",
+            modifier = Modifier.size(48.dp),
+        )
 
         Column(
             verticalArrangement = Arrangement.spacedBy(12.dp),

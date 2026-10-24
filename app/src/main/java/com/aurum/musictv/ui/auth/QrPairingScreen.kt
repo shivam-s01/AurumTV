@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -142,7 +143,20 @@ fun QrPairingScreen(onSignedIn: () -> Unit, onDismiss: () -> Unit) {
 
         // ── Right: instructions + alternatives ──────────────────────────
         Column(modifier = Modifier.widthIn(max = 460.dp)) {
-            Text("Astra", color = AurumColors.Gold, fontSize = 40.sp, fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(com.aurum.musictv.R.drawable.astra_logo),
+                    contentDescription = null,
+                    modifier = Modifier.size(52.dp),
+                )
+                Text(
+                    "Astra",
+                    color = AurumColors.Gold,
+                    fontSize = 40.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(start = 14.dp),
+                )
+            }
             Text(
                 text = if (signedInName != null) "Signed in as $signedInName" else "Sign in with your phone",
                 color = AurumColors.TextPrimary,
