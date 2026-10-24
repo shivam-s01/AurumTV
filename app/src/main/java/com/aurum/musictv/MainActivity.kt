@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import com.aurum.musictv.ui.util.LocalReduceMotion
+import com.aurum.musictv.ui.util.TvScale
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -69,9 +70,11 @@ class MainActivity : ComponentActivity() {
         playerManager = (application as AurumTvApp).playerManager
 
         setContent {
-            AurumTvTheme {
-                MotionProvider {
-                    AurumApp(playerManager = playerManager)
+            TvScale {
+                AurumTvTheme {
+                    MotionProvider {
+                        AurumApp(playerManager = playerManager)
+                    }
                 }
             }
         }

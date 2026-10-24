@@ -46,14 +46,15 @@ class HomeViewModel : ViewModel() {
         autoRefreshPeriodically()
     }
 
-    /** TV has no pull-to-refresh, so Home reloads its browse rows itself
-     *  every 10 minutes while visible (query pools are randomized, so it
-     *  surfaces different songs). */
+    /** Retry only: if Home is still empty (server was down at launch) it
+     *  tries again every 10 minutes. Once rows are on screen they are left
+     *  alone, because reloading replaced every row while the person was
+     *  browsing with the remote, which dropped focus and jumped the page. */
     private fun autoRefreshPeriodically() {
         viewModelScope.launch {
             while (true) {
                 delay(10 * 60 * 1000L)
-                if (isHomeVisible) loadHome()
+                if (isHomeVisible && _uiState.value.sections.isEmpty()) loadHome()
             }
         }
     }

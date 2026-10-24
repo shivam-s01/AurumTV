@@ -134,7 +134,7 @@ fun LibraryScreen(
 
             else -> LazyVerticalGrid(
                 columns = GridCells.Fixed(6),
-                contentPadding = PaddingValues(bottom = 32.dp),
+                contentPadding = PaddingValues(top = 12.dp, bottom = 32.dp),
                 horizontalArrangement = Arrangement.spacedBy(20.dp),
                 verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
@@ -142,7 +142,7 @@ fun LibraryScreen(
                     SongCard(
                         song = song,
                         onClick = { onSongClick(song, activeList) },
-                        size = 150.dp,
+                        size = androidx.compose.ui.unit.Dp.Unspecified,
                     )
                 }
             }

@@ -5,6 +5,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -26,6 +29,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
@@ -61,14 +65,16 @@ fun SongCard(
     )
     val touchFocusRequester = rememberClickFocusRequester()
     val isTouch = isTouchDevice()
+    // size = Dp.Unspecified -> "fluid": the card fills its grid cell exactly
+    // (square), so Library/Search grids have no uneven gap on the right.
+    val fluid = !size.isSpecified
 
     Column(
-        modifier = modifier.width(size),
+        modifier = if (fluid) modifier.fillMaxWidth() else modifier.width(size),
     ) {
         Surface(
             onClick = onClick,
-            modifier = Modifier
-                .size(size)
+            modifier = (if (fluid) Modifier.fillMaxWidth().aspectRatio(1f) else Modifier.size(size))
                 .graphicsLayer { scaleX = scale; scaleY = scale }
                 .onFocusChanged { isFocused = it.isFocused }
                 .adaptiveClickable(touchFocusRequester, isTouch, onClick),
@@ -90,13 +96,12 @@ fun SongCard(
                 AsyncImage(
                     model = song.albumArtUrl,
                     contentDescription = song.title,
-                    modifier = Modifier.size(size).clip(RoundedCornerShape(10.dp)),
+                    modifier = (if (fluid) Modifier.fillMaxSize() else Modifier.size(size)).clip(RoundedCornerShape(10.dp)),
                     contentScale = ContentScale.Crop,
                 )
                 if (isFocused) {
                     Box(
-                        modifier = Modifier
-                            .size(size)
+                        modifier = (if (fluid) Modifier.fillMaxSize() else Modifier.size(size))
                             .background(Color.Black.copy(alpha = 0.25f)),
                         contentAlignment = Alignment.Center,
                     ) {

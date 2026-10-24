@@ -122,7 +122,11 @@ fun SearchScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 items(state.results, key = { it.id }) { song ->
-                    SongCard(song = song, onClick = { onSongClick(song, state.results) })
+                    SongCard(
+                        song = song,
+                        onClick = { onSongClick(song, state.results) },
+                        size = androidx.compose.ui.unit.Dp.Unspecified,
+                    )
                 }
             }
         }
