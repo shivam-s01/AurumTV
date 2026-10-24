@@ -5,6 +5,7 @@ import coil.Coil
 import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import com.aurum.musictv.player.PlayerManager
 
 /**
  * Configures Coil's global ImageLoader with hard caps tuned for 1GB-RAM
@@ -15,6 +16,11 @@ import coil.memory.MemoryCache
  * instead of trusting the percentage-of-RAM default.
  */
 class AurumTvApp : Application() {
+
+    /** One PlayerManager for the whole process: leaving the UI (Back from
+     *  Home) must not drop the queue, so the next song, shuffle/repeat and
+     *  remote Next/Previous keep working with the screen closed. */
+    val playerManager: PlayerManager by lazy { PlayerManager(this) }
 
     override fun onCreate() {
         super.onCreate()

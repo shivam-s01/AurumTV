@@ -29,6 +29,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import com.aurum.musictv.ui.util.LocalReduceMotion
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -64,19 +66,17 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        playerManager = PlayerManager(applicationContext)
+        playerManager = (application as AurumTvApp).playerManager
 
         setContent {
             AurumTvTheme {
-                AurumApp(playerManager = playerManager)
+                MotionProvider {
+                    AurumApp(playerManager = playerManager)
+                }
             }
         }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        playerManager.release()
-    }
 }
 
 private sealed class Screen {
@@ -242,4 +242,14 @@ private fun PlaybackNoticeHost(playerManager: PlayerManager) {
             Text(text, color = AurumColors.TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
         }
     }
+}
+
+/** Publishes the "Reduce motion" setting to every card/banner below it. */
+@Composable
+private fun MotionProvider(content: @Composable () -> Unit) {
+    val context = LocalContext.current.applicationContext
+    val reduce by remember {
+        SettingsStore.observe(context).map { it.reduceMotion }.distinctUntilChanged()
+    }.collectAsState(initial = false)
+    CompositionLocalProvider(LocalReduceMotion provides reduce, content = content)
 }

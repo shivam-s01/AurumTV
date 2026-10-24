@@ -1,5 +1,6 @@
 package com.aurum.musictv.settings
 
+import android.app.ActivityManager
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
@@ -61,7 +62,7 @@ object SettingsStore {
                 eqPreset = parseEnum(prefs[KEY_EQ], EqPreset.FLAT),
                 bassBoost = parseEnum(prefs[KEY_BASS], FxLevel.OFF),
                 volumeBoost = parseEnum(prefs[KEY_VOLUME], FxLevel.OFF),
-                reduceMotion = prefs[KEY_REDUCE_MOTION] ?: false,
+                reduceMotion = prefs[KEY_REDUCE_MOTION] ?: isLowRam(context),
             )
         }.distinctUntilChanged()
 
@@ -70,6 +71,11 @@ object SettingsStore {
         "NORMAL" -> AudioQuality.NORMAL
         else -> AudioQuality.HIGH
     }
+
+    /** 1 GB TV boxes report isLowRamDevice: Reduce motion starts ON there. */
+    private fun isLowRam(context: Context): Boolean = runCatching {
+        (context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).isLowRamDevice
+    }.getOrDefault(false)
 
     private inline fun <reified T : Enum<T>> parseEnum(raw: String?, default: T): T =
         enumValues<T>().firstOrNull { it.name == raw } ?: default

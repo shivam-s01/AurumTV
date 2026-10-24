@@ -4,6 +4,7 @@ import android.app.PendingIntent
 import android.content.Intent
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -120,7 +121,7 @@ class AurumTvPlaybackService : MediaSessionService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
-        mediaSession = MediaSession.Builder(this, player)
+        mediaSession = MediaSession.Builder(this, QueueAwarePlayer(player))
             .setSessionActivity(sessionActivityPendingIntent)
             .build()
     }
@@ -139,4 +140,47 @@ class AurumTvPlaybackService : MediaSessionService() {
         }
         super.onDestroy()
     }
+}
+
+/**
+ * The session player holds a single media item (PlayerManager resolves each
+ * song's stream on demand), so Next/Previous from a TV remote, a Bluetooth
+ * headset or the notification are routed to PlayerManager's queue instead.
+ */
+private class QueueAwarePlayer(player: Player) : ForwardingPlayer(player) {
+
+    private val queueCommands = intArrayOf(
+        Player.COMMAND_SEEK_TO_NEXT,
+        Player.COMMAND_SEEK_TO_PREVIOUS,
+        Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+        Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+    )
+
+    private fun bridged(): Boolean = MediaKeyBridge.onNext != null
+
+    override fun getAvailableCommands(): Player.Commands {
+        val base = super.getAvailableCommands()
+        return if (bridged()) base.buildUpon().addAll(*queueCommands).build() else base
+    }
+
+    override fun isCommandAvailable(command: Int): Boolean =
+        (bridged() && command in queueCommands) || super.isCommandAvailable(command)
+
+    override fun hasNextMediaItem(): Boolean = bridged() || super.hasNextMediaItem()
+
+    override fun hasPreviousMediaItem(): Boolean = bridged() || super.hasPreviousMediaItem()
+
+    override fun seekToNext() {
+        val cb = MediaKeyBridge.onNext
+        if (cb != null) cb() else super.seekToNext()
+    }
+
+    override fun seekToNextMediaItem() = seekToNext()
+
+    override fun seekToPrevious() {
+        val cb = MediaKeyBridge.onPrevious
+        if (cb != null) cb() else super.seekToPrevious()
+    }
+
+    override fun seekToPreviousMediaItem() = seekToPrevious()
 }

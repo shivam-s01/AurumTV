@@ -34,6 +34,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     init {
         refreshStaticInfo()
         viewModelScope.launch {
+            AuthRepository.awaitReady()
+            refreshStaticInfo()
+        }
+        viewModelScope.launch {
             SettingsStore.observe(getApplication()).collect { settings ->
                 _uiState.value = _uiState.value.copy(settings = settings)
             }

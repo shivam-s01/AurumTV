@@ -41,12 +41,19 @@ class LibraryViewModel : ViewModel() {
 
     /** Reloads all three lists in parallel; called whenever the screen is shown. */
     fun refresh() {
-        val signedIn = AuthRepository.isSignedIn
-        _uiState.update { it.copy(isLoading = signedIn, isSignedIn = signedIn) }
-        if (!signedIn) {
-            _uiState.update { LibraryUiState(isLoading = false, isSignedIn = false, tab = it.tab) }
-            return
+        viewModelScope.launch {
+            AuthRepository.awaitReady()
+            val signedIn = AuthRepository.isSignedIn
+            _uiState.update { it.copy(isLoading = signedIn, isSignedIn = signedIn) }
+            if (!signedIn) {
+                _uiState.update { LibraryUiState(isLoading = false, isSignedIn = false, tab = it.tab) }
+                return@launch
+            }
+            loadAll()
         }
+    }
+
+    private fun loadAll() {
         viewModelScope.launch {
             val liked = runCatching { SyncRepository.fetchLikedSongs() }.getOrDefault(emptyList())
             _uiState.update { it.copy(likedSongs = liked, isLoading = false) }

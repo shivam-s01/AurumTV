@@ -156,6 +156,10 @@ dependencies {
     // loading, Kotlin-first, good TV-safe defaults, has a Compose artifact.
     implementation("io.coil-kt:coil-compose:2.6.0")
 
+    // QR code encoder for the TV sign-in screen (pure Java, ~550 KB, no
+    // network call and no third-party QR website needed).
+    implementation("com.google.zxing:core:3.5.3")
+
     // Networking: OkHttp directly (no Retrofit) + manual org.json parsing,
     // same pattern as before — kept for the Worker (search/stream) calls.
     implementation("com.squareup.okhttp3:okhttp:4.12.0")

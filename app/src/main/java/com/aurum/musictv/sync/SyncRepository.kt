@@ -32,6 +32,13 @@ object SyncRepository {
     private val userId: String?
         get() = SupabaseClientProvider.auth.currentUserOrNull()?.id
 
+    /** The saved login is restored asynchronously at app start; wait for it
+     *  (bounded) so a cold start never reads "signed out" by mistake. */
+    private suspend fun awaitUserId(): String? {
+        AuthRepository.awaitReady()
+        return userId
+    }
+
     // Ids of liked songs, loaded once per session/sign-in and kept in sync
     // by like/unlike — so the Player's heart icon is a memory lookup, not a
     // network round-trip on every song change.
@@ -48,7 +55,7 @@ object SyncRepository {
     /** Liked songs, newest-looking first. Capped so a huge library can't
      *  stall a 1 GB TV box; the list is lazy in the UI. */
     suspend fun fetchLikedSongs(limit: Int = 500): List<Song> {
-        val uid = userId ?: return emptyList()
+        val uid = awaitUserId() ?: return emptyList()
         return runCatching {
             val rows = SupabaseClientProvider.postgrest.from("favorites")
                 .select {
@@ -65,7 +72,7 @@ object SyncRepository {
      *  id-only fetch per session. */
     suspend fun isSongLiked(songId: String): Boolean {
         likedIds?.let { return songId in it }
-        val uid = userId ?: return false
+        val uid = awaitUserId() ?: return false
         return runCatching {
             val ids = SupabaseClientProvider.postgrest.from("favorites")
                 .select(columns = Columns.list("song_id")) {
@@ -81,7 +88,7 @@ object SyncRepository {
 
     /** @return true if the like was stored. */
     suspend fun likeSong(song: Song): Boolean {
-        val uid = userId ?: return false
+        val uid = awaitUserId() ?: return false
         return runCatching {
             SupabaseClientProvider.postgrest.from("favorites").upsert(
                 FavoriteUpsert(songId = song.id, userId = uid, data = song.toPhoneJson())
@@ -93,7 +100,7 @@ object SyncRepository {
 
     /** @return true if the like was removed. */
     suspend fun unlikeSong(songId: String): Boolean {
-        val uid = userId ?: return false
+        val uid = awaitUserId() ?: return false
         return runCatching {
             SupabaseClientProvider.postgrest.from("favorites").delete {
                 filter {
@@ -111,7 +118,7 @@ object SyncRepository {
     /** Most recent plays, newest first. Ordered + limited on the server —
      *  the phone's history can hold thousands of rows. */
     suspend fun fetchRecentlyPlayed(limit: Int = 30): List<Song> {
-        val uid = userId ?: return emptyList()
+        val uid = awaitUserId() ?: return emptyList()
         return runCatching {
             SupabaseClientProvider.postgrest.from("history")
                 .select {
@@ -128,7 +135,7 @@ object SyncRepository {
     /** Records a play in the phone's own `history` table (upsert per song,
      *  newest played_at wins — same as the phone's pushHistoryEntry). */
     suspend fun logRecentlyPlayed(song: Song) {
-        val uid = userId ?: return
+        val uid = awaitUserId() ?: return
         runCatching {
             SupabaseClientProvider.postgrest.from("history").upsert(
                 HistoryUpsert(
@@ -145,7 +152,7 @@ object SyncRepository {
 
     /** The phone's playlists, pinned first then in the phone's own order. */
     suspend fun fetchPlaylists(): List<TvPlaylist> {
-        val uid = userId ?: return emptyList()
+        val uid = awaitUserId() ?: return emptyList()
         return runCatching {
             SupabaseClientProvider.postgrest.from("playlists")
                 .select {

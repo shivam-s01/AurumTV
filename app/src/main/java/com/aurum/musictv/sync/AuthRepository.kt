@@ -11,7 +11,9 @@ import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingExcept
 import io.github.jan.supabase.auth.providers.Google
 import io.github.jan.supabase.auth.providers.builtin.IDToken
 import io.github.jan.supabase.auth.status.SessionStatus
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * TV login, same shape as Spotify TV / mobile auth_service.dart: one tap,
@@ -32,11 +34,22 @@ object AuthRepository {
 
     val displayName: String?
         get() = SupabaseClientProvider.auth.currentUserOrNull()
-            ?.userMetadata?.get("full_name")?.toString()?.trim('"')
+            ?.userMetadata?.let { m -> (m["full_name"] ?: m["name"])?.toString()?.trim('"') }
 
     val avatarUrl: String?
         get() = SupabaseClientProvider.auth.currentUserOrNull()
-            ?.userMetadata?.get("avatar_url")?.toString()?.trim('"')
+            ?.userMetadata?.let { m -> (m["avatar_url"] ?: m["picture"])?.toString()?.trim('"') }
+
+    /** Suspends (max 5 s) until the saved login has been restored from disk.
+     *  Without this, a cold start briefly looks "signed out". */
+    suspend fun awaitReady() {
+        try {
+            withTimeoutOrNull(5_000) { SupabaseClientProvider.auth.awaitInitialization() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+        }
+    }
 
     /** Returns null on success, error message on failure — same contract
      *  as mobile's signInWithGoogle(). */

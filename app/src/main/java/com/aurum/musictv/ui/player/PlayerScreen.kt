@@ -1,6 +1,28 @@
 package com.aurum.musictv.ui.player
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.style.TextOverflow
+import com.aurum.musictv.player.RepeatMode
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -90,7 +112,7 @@ fun PlayerScreen(playerManager: PlayerManager) {
                             text = song.artist,
                             color = AurumColors.TextSecondary,
                             fontSize = 18.sp,
-                            modifier = Modifier.padding(top = 4.dp, bottom = 24.dp),
+                            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
                         )
                     }
                     // Heart / save-to-Library toggle — this is what "save
@@ -107,21 +129,11 @@ fun PlayerScreen(playerManager: PlayerManager) {
                     (state.positionMs.toFloat() / state.durationMs.toFloat()).coerceIn(0f, 1f)
                 } else 0f
 
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(4.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(AurumColors.AmoledDivider),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .fillMaxWidth(progress)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(AurumColors.Gold),
-                    )
-                }
+                SeekBar(
+                    progress = progress,
+                    onSeekFraction = { f -> playerManager.seekTo((f * state.durationMs).toLong()) },
+                    onSeekBy = { delta -> playerManager.seekBy(delta) },
+                )
 
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -132,7 +144,7 @@ fun PlayerScreen(playerManager: PlayerManager) {
                 }
 
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 32.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -161,7 +173,161 @@ fun PlayerScreen(playerManager: PlayerManager) {
                         onClick = { playerManager.playNext() },
                     )
                 }
+
+                // Spotify-style mode row: shuffle / repeat / sleep timer.
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    ModeButton(
+                        icon = Icons.Filled.Shuffle,
+                        label = "Shuffle",
+                        active = state.shuffleOn,
+                        onClick = { playerManager.toggleShuffle() },
+                    )
+                    Box(modifier = Modifier.padding(horizontal = 12.dp)) {
+                        ModeButton(
+                            icon = if (state.repeatMode == RepeatMode.ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat,
+                            label = when (state.repeatMode) {
+                                RepeatMode.OFF -> "Repeat"
+                                RepeatMode.ALL -> "Repeat all"
+                                RepeatMode.ONE -> "Repeat one"
+                            },
+                            active = state.repeatMode != RepeatMode.OFF,
+                            onClick = { playerManager.cycleRepeat() },
+                        )
+                    }
+                    ModeButton(
+                        icon = Icons.Filled.Timer,
+                        label = if (state.sleepMinutes > 0) "Sleep ${state.sleepMinutes}m" else "Sleep",
+                        active = state.sleepMinutes > 0,
+                        onClick = { playerManager.cycleSleepTimer() },
+                    )
+                }
+
+                state.queue.getOrNull(state.currentIndex + 1)?.let { next ->
+                    Text(
+                        text = "Up next · ${next.title} — ${next.artist}",
+                        color = AurumColors.TextSecondary,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                    )
+                }
             }
+        }
+    }
+}
+
+/**
+ * Seek bar. Remote: focus it and press Left/Right to jump 10 s. Touch: tap
+ * anywhere or drag; the song is seeked once when the finger lifts (one
+ * network seek, not one per pixel).
+ */
+@Composable
+private fun SeekBar(
+    progress: Float,
+    onSeekFraction: (Float) -> Unit,
+    onSeekBy: (Long) -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    var widthPx by remember { mutableStateOf(0) }
+    var dragFraction by remember { mutableStateOf<Float?>(null) }
+    // pointerInput(Unit) lives across recompositions: always call the newest lambda.
+    val seekFraction by rememberUpdatedState(onSeekFraction)
+    val shown = dragFraction ?: progress
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(28.dp)
+            .onSizeChanged { widthPx = it.width }
+            .onFocusChanged { focused = it.isFocused }
+            .onKeyEvent { ev ->
+                if (ev.type == KeyEventType.KeyDown) {
+                    when (ev.key) {
+                        Key.DirectionLeft -> { onSeekBy(-10_000L); true }
+                        Key.DirectionRight -> { onSeekBy(10_000L); true }
+                        else -> false
+                    }
+                } else false
+            }
+            .focusable()
+            .pointerInput(Unit) {
+                detectTapGestures { offset ->
+                    if (widthPx > 0) seekFraction((offset.x / widthPx).coerceIn(0f, 1f))
+                }
+            }
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragEnd = {
+                        dragFraction?.let { seekFraction(it) }
+                        dragFraction = null
+                    },
+                    onDragCancel = { dragFraction = null },
+                ) { change, _ ->
+                    change.consume()
+                    if (widthPx > 0) dragFraction = (change.position.x / widthPx).coerceIn(0f, 1f)
+                }
+            },
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(if (focused) 8.dp else 4.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(AurumColors.AmoledDivider),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(shown)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(if (focused) AurumColors.GoldLight else AurumColors.Gold),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ModeButton(icon: ImageVector, label: String, active: Boolean, onClick: () -> Unit) {
+    val focusRequester = rememberClickFocusRequester()
+    val isTouch = isTouchDevice()
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(22.dp)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = if (active) AurumColors.GoldDark.copy(alpha = 0.30f) else AurumColors.AmoledBgSurface,
+            focusedContainerColor = AurumColors.AmoledBgElevated,
+        ),
+        border = ClickableSurfaceDefaults.border(
+            focusedBorder = Border(
+                border = androidx.compose.foundation.BorderStroke(2.dp, AurumColors.Gold),
+                shape = RoundedCornerShape(22.dp),
+            ),
+        ),
+        modifier = Modifier.adaptiveClickable(focusRequester, isTouch, onClick),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = if (active) AurumColors.Gold else AurumColors.TextSecondary,
+                modifier = Modifier.size(20.dp),
+            )
+            Text(
+                label,
+                color = if (active) AurumColors.Gold else AurumColors.TextSecondary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+            )
         }
     }
 }

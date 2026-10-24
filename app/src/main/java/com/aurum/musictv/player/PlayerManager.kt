@@ -51,7 +51,13 @@ data class PlayerUiState(
     val isResolving: Boolean = false,
     /** Whether the current song is in the user's Liked Songs (heart icon). */
     val isCurrentSongLiked: Boolean = false,
+    val shuffleOn: Boolean = false,
+    val repeatMode: RepeatMode = RepeatMode.OFF,
+    /** Selected sleep-timer length in minutes, 0 = off. */
+    val sleepMinutes: Int = 0,
 )
+
+enum class RepeatMode { OFF, ALL, ONE }
 
 /**
  * Talks to the player through a MediaController connected to
@@ -84,12 +90,20 @@ class PlayerManager(private val context: Context) {
     private var playJob: Job? = null
     private var prefetchJob: Job? = null
     private var extendJob: Job? = null
+    private var sleepJob: Job? = null
+    private var originalQueue: List<Song>? = null
 
     // Recovery state for the CURRENT song (reset on every new song).
     private var recoveryAttempts = 0
     private var preferAac = false
 
     init {
+        // Remote / headset / notification Next-Previous keys land here (see
+        // QueueAwarePlayer in the playback service), so the queue works even
+        // when the app UI is closed.
+        MediaKeyBridge.onNext = { playNext() }
+        MediaKeyBridge.onPrevious = { playPrevious() }
+
         val sessionToken = SessionToken(
             context,
             ComponentName(context, AurumTvPlaybackService::class.java),
@@ -236,7 +250,11 @@ class PlayerManager(private val context: Context) {
     /** Respects the Autoplay setting: if off, playback simply stops at the
      *  end of the current track. */
     private fun maybeAutoplayNext() {
-        if (settings.autoplay) playNext()
+        val repeat = _uiState.value.repeatMode
+        when {
+            repeat == RepeatMode.ONE -> playIndex(_uiState.value.currentIndex)
+            settings.autoplay || repeat == RepeatMode.ALL -> playNext()
+        }
     }
 
     // ── Queue / transport ───────────────────────────────────────────────
@@ -244,8 +262,81 @@ class PlayerManager(private val context: Context) {
     fun playQueue(songs: List<Song>, startIndex: Int) {
         if (songs.isEmpty()) return
         val index = startIndex.coerceIn(0, songs.lastIndex)
-        _uiState.update { it.copy(queue = songs, currentIndex = index) }
-        playIndex(index)
+        if (_uiState.value.shuffleOn) {
+            // Shuffle stays on across taps: tapped song first, rest shuffled.
+            originalQueue = songs
+            val shuffled = listOf(songs[index]) + songs.filterIndexed { i, _ -> i != index }.shuffled()
+            _uiState.update { it.copy(queue = shuffled, currentIndex = 0) }
+            playIndex(0)
+        } else {
+            originalQueue = null
+            _uiState.update { it.copy(queue = songs, currentIndex = index) }
+            playIndex(index)
+        }
+    }
+
+    fun toggleShuffle() {
+        val s = _uiState.value
+        val current = s.currentSong
+        if (!s.shuffleOn) {
+            if (current == null || s.queue.size < 2) {
+                _uiState.update { it.copy(shuffleOn = true) }
+                return
+            }
+            originalQueue = s.queue
+            val rest = s.queue.filterIndexed { i, _ -> i != s.currentIndex }.shuffled()
+            _uiState.update { it.copy(shuffleOn = true, queue = listOf(current) + rest, currentIndex = 0) }
+        } else {
+            val orig = originalQueue
+            originalQueue = null
+            val idx = if (orig != null && current != null) orig.indexOfFirst { it.id == current.id } else -1
+            if (orig != null && idx >= 0) {
+                _uiState.update { it.copy(shuffleOn = false, queue = orig, currentIndex = idx) }
+            } else {
+                _uiState.update { it.copy(shuffleOn = false) }
+            }
+        }
+        prefetchNext(_uiState.value.currentIndex)
+    }
+
+    fun cycleRepeat() {
+        _uiState.update {
+            it.copy(
+                repeatMode = when (it.repeatMode) {
+                    RepeatMode.OFF -> RepeatMode.ALL
+                    RepeatMode.ALL -> RepeatMode.ONE
+                    RepeatMode.ONE -> RepeatMode.OFF
+                },
+            )
+        }
+    }
+
+    /** Sleep timer: pauses playback after [minutes] (0 cancels). */
+    fun setSleepTimer(minutes: Int) {
+        sleepJob?.cancel()
+        _uiState.update {
+            it.copy(
+                sleepMinutes = minutes,
+                playbackError = if (minutes > 0) "Sleep timer: $minutes min" else "Sleep timer off",
+            )
+        }
+        if (minutes <= 0) return
+        sleepJob = scope.launch {
+            delay(minutes * 60_000L)
+            controller?.pause()
+            _uiState.update { it.copy(sleepMinutes = 0, playbackError = "Sleep timer — music paused") }
+        }
+    }
+
+    fun cycleSleepTimer() {
+        setSleepTimer(
+            when (_uiState.value.sleepMinutes) {
+                0 -> 15
+                15 -> 30
+                30 -> 60
+                else -> 0
+            }
+        )
     }
 
     /** Clears a shown playback error — call after the UI has displayed it. */
@@ -448,7 +539,11 @@ class PlayerManager(private val context: Context) {
     fun playNext() {
         val state = _uiState.value
         val nextIndex = state.currentIndex + 1
-        if (nextIndex < state.queue.size) playIndex(nextIndex) else extendQueueThenPlayNext()
+        when {
+            nextIndex < state.queue.size -> playIndex(nextIndex)
+            state.repeatMode == RepeatMode.ALL && state.queue.isNotEmpty() -> playIndex(0)
+            else -> extendQueueThenPlayNext()
+        }
     }
 
     /** End of queue with Autoplay on: pull more songs by the same artist so
@@ -483,11 +578,23 @@ class PlayerManager(private val context: Context) {
     }
 
     fun seekTo(positionMs: Long) {
-        controller?.seekTo(positionMs)
-        _uiState.update { it.copy(positionMs = positionMs) }
+        val duration = _uiState.value.durationMs
+        val target = if (duration > 0) positionMs.coerceIn(0L, duration) else positionMs.coerceAtLeast(0L)
+        controller?.seekTo(target)
+        _uiState.update { it.copy(positionMs = target) }
+    }
+
+    /** D-pad left/right on the seek bar: jump relative to the live position. */
+    fun seekBy(deltaMs: Long) {
+        val c = controller ?: return
+        if (_uiState.value.isResolving) return
+        seekTo(c.currentPosition + deltaMs)
     }
 
     fun release() {
+        MediaKeyBridge.onNext = null
+        MediaKeyBridge.onPrevious = null
+        sleepJob?.cancel()
         // Cancels the ticker, settings collector and any in-flight resolve.
         scope.cancel()
         playerListener?.let { controller?.removeListener(it) }

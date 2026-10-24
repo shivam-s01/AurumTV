@@ -35,6 +35,7 @@ import androidx.tv.material3.Text
 import coil.compose.AsyncImage
 import com.aurum.musictv.data.model.Song
 import com.aurum.musictv.ui.theme.AurumColors
+import com.aurum.musictv.ui.util.LocalReduceMotion
 import com.aurum.musictv.ui.util.adaptiveClickable
 import com.aurum.musictv.ui.util.isTouchDevice
 import com.aurum.musictv.ui.util.rememberClickFocusRequester
@@ -54,7 +55,7 @@ fun SongCard(
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
-        targetValue = if (isFocused) 1.12f else 1f,
+        targetValue = if (isFocused && !LocalReduceMotion.current) 1.12f else 1f,
         animationSpec = tween(durationMillis = 150),
         label = "cardScale",
     )

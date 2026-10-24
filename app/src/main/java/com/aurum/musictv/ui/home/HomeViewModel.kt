@@ -107,6 +107,10 @@ class HomeViewModel : ViewModel() {
     /** Favorites + history from the phone's own sync tables, both at once. */
     private fun loadUserData() {
         viewModelScope.launch {
+            AuthRepository.awaitReady()
+            _uiState.update {
+                it.copy(greetingName = AuthRepository.displayName, avatarUrl = AuthRepository.avatarUrl)
+            }
             val recent = runCatching { SyncRepository.fetchRecentlyPlayed(limit = 30) }.getOrDefault(emptyList())
             _uiState.update { it.copy(recentlyPlayed = recent, continueListening = recent.firstOrNull()) }
         }

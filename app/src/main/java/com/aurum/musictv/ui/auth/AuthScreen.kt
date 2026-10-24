@@ -1,7 +1,6 @@
 package com.aurum.musictv.ui.auth
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,161 +8,88 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.tv.material3.Border
+import androidx.tv.material3.ClickableSurfaceDefaults
+import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.aurum.musictv.sync.AuthRepository
 import com.aurum.musictv.ui.theme.AurumColors
+import com.aurum.musictv.ui.util.adaptiveClickable
+import com.aurum.musictv.ui.util.isTouchDevice
+import com.aurum.musictv.ui.util.rememberClickFocusRequester
 import kotlinx.coroutines.launch
 
 /**
- * Sign-in is entirely optional (Spotify-TV style) — this screen is only
- * ever reached via the profile icon, never blocks the app. Two ways in:
- * on-device Google Sign-In (Credential Manager), or scan-a-QR-with-your-
- * phone (no TV account picker needed, works even when the TV box has no
- * Google account configured at the OS level). "Not now" / back always
- * just returns to Home unchanged.
+ * Account screen. Signed out → the QR / code pairing screen (phone approves,
+ * TV signs in). Signed in → who you are + Sign out. Sign-in is always
+ * optional: Back / "Not now" returns to Home and music works without it.
  */
 @Composable
 fun AuthScreen(onSignedIn: () -> Unit, onDismiss: () -> Unit) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var isLoading by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    var showQr by remember { mutableStateOf(false) }
-    val alreadySignedIn = AuthRepository.isSignedIn
-
-    if (showQr) {
-        QrPairingScreen(
-            onSignedIn = onSignedIn,
-            onBack = { showQr = false },
-        )
+    if (!AuthRepository.isSignedIn) {
+        QrPairingScreen(onSignedIn = onSignedIn, onDismiss = onDismiss)
         return
     }
 
+    val scope = rememberCoroutineScope()
     Column(
         modifier = Modifier.fillMaxSize().padding(48.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        Text("Astra", color = AurumColors.Gold, fontSize = 48.sp, fontWeight = FontWeight.Bold)
         Text(
-            text = "Astra",
-            color = AurumColors.Gold,
-            fontSize = 48.sp,
-            fontWeight = FontWeight.Bold,
+            text = AuthRepository.displayName ?: "Signed in",
+            color = AurumColors.TextPrimary,
+            fontSize = 22.sp,
+            modifier = Modifier.padding(top = 12.dp),
         )
-
-        if (alreadySignedIn) {
-            Text(
-                text = AuthRepository.displayName ?: "Signed in",
-                color = AurumColors.TextPrimary,
-                fontSize = 20.sp,
-                modifier = Modifier.padding(top = 16.dp, bottom = 32.dp),
-            )
-            PillButton(
-                label = "Sign out",
-                onClick = {
-                    scope.launch {
-                        AuthRepository.signOut()
-                        onDismiss()
-                    }
-                },
-            )
-        } else {
-            Text(
-                text = "Sign in with the same Google account you use on your phone.\nYour library, playlists, and playback pick up right where you left off.",
-                color = AurumColors.TextSecondary,
-                fontSize = 16.sp,
-                modifier = Modifier.padding(top = 16.dp, bottom = 40.dp),
-            )
-
-            PillButton(
-                label = if (isLoading) "Signing in..." else "Sign in with Google",
-                enabled = !isLoading,
-                onClick = {
-                    isLoading = true
-                    errorMessage = null
-                    scope.launch {
-                        val error = AuthRepository.signInWithGoogle(context)
-                        isLoading = false
-                        if (error == null) onSignedIn() else errorMessage = error
-                    }
-                },
-            )
-
-            Row(modifier = Modifier.padding(top = 16.dp)) {
-                Text(
-                    text = "or",
-                    color = AurumColors.TextSecondary,
-                    fontSize = 14.sp,
-                )
+        Text(
+            text = "Connected to your Astra library",
+            color = AurumColors.TextSecondary,
+            fontSize = 14.sp,
+            modifier = Modifier.padding(top = 4.dp, bottom = 32.dp),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            AccountButton("Sign out") {
+                scope.launch {
+                    AuthRepository.signOut()
+                    onDismiss()
+                }
             }
-
-            Row(modifier = Modifier.padding(top = 16.dp)) {
-                PillButton(
-                    label = "Sign in with QR code",
-                    filled = false,
-                    onClick = { showQr = true },
-                )
-            }
-
-            errorMessage?.let {
-                Text(
-                    text = it,
-                    color = Color(0xFFE05252),
-                    fontSize = 14.sp,
-                    modifier = Modifier.padding(top = 16.dp),
-                )
-            }
-        }
-
-        Row(modifier = Modifier.padding(top = 32.dp)) {
-            Text(
-                text = "Not now",
-                color = AurumColors.TextSecondary,
-                fontSize = 14.sp,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .clickable(onClick = onDismiss)
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-            )
+            AccountButton("Back", onClick = onDismiss)
         }
     }
 }
 
 @Composable
-private fun PillButton(
-    label: String,
-    onClick: () -> Unit,
-    enabled: Boolean = true,
-    filled: Boolean = true,
-) {
-    Column(
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .let {
-                if (filled) it.background(AurumColors.Gold)
-                else it.background(AurumColors.AmoledBgSurface)
-            }
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 32.dp, vertical = 14.dp),
+private fun AccountButton(label: String, onClick: () -> Unit) {
+    val focus = rememberClickFocusRequester()
+    val isTouch = isTouchDevice()
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.adaptiveClickable(focus, isTouch, onClick),
+        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(10.dp)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = AurumColors.AmoledBgSurface,
+            focusedContainerColor = AurumColors.AmoledBgElevated,
+        ),
+        border = ClickableSurfaceDefaults.border(
+            focusedBorder = Border(border = BorderStroke(2.dp, AurumColors.Gold), shape = RoundedCornerShape(10.dp)),
+        ),
     ) {
         Text(
             text = label,
-            color = if (filled) AurumColors.AmoledBg else AurumColors.TextPrimary,
-            fontSize = 16.sp,
+            color = AurumColors.TextPrimary,
+            fontSize = 15.sp,
             fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 28.dp, vertical = 12.dp),
         )
     }
 }
