@@ -72,6 +72,7 @@ fun UpdateDialogHost() {
     UpdateDialog(ui)
 }
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 private fun UpdateDialog(ui: UpdateUi) {
     val context = LocalContext.current
