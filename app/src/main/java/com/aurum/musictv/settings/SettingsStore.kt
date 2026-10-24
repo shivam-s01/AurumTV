@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -52,6 +53,10 @@ object SettingsStore {
     private val KEY_VOLUME = stringPreferencesKey("volume_boost")
     private val KEY_REDUCE_MOTION = booleanPreferencesKey("reduce_motion")
     private val KEY_RECENT_SEARCHES = stringPreferencesKey("recent_searches")
+    private val KEY_DEVICE_ID = stringPreferencesKey("device_id")
+    private val KEY_UPD_LAST_CHECK = longPreferencesKey("upd_last_check")
+    private val KEY_PING_KEY = stringPreferencesKey("ping_key")
+    private val KEY_PING_AT = longPreferencesKey("ping_at")
 
     fun observe(context: Context): Flow<AppSettings> =
         context.dataStore.data.map { prefs ->
@@ -132,6 +137,37 @@ object SettingsStore {
 
     suspend fun clearRecentSearches(context: Context) {
         context.dataStore.edit { it.remove(KEY_RECENT_SEARCHES) }
+    }
+
+    // ── Update check / device ping bookkeeping (a few tiny values) ───────
+
+    /** Random per-install id (not hardware based, resets on reinstall). */
+    suspend fun deviceId(context: Context): String {
+        context.dataStore.data.first()[KEY_DEVICE_ID]?.let { return it }
+        var id = ""
+        context.dataStore.edit { p ->
+            id = p[KEY_DEVICE_ID] ?: java.util.UUID.randomUUID().toString().also { p[KEY_DEVICE_ID] = it }
+        }
+        return id
+    }
+
+    suspend fun lastUpdateCheck(context: Context): Long =
+        context.dataStore.data.first()[KEY_UPD_LAST_CHECK] ?: 0L
+
+    suspend fun setLastUpdateCheck(context: Context, at: Long) {
+        context.dataStore.edit { it[KEY_UPD_LAST_CHECK] = at }
+    }
+
+    suspend fun lastPing(context: Context): Pair<String, Long> {
+        val p = context.dataStore.data.first()
+        return (p[KEY_PING_KEY] ?: "") to (p[KEY_PING_AT] ?: 0L)
+    }
+
+    suspend fun setLastPing(context: Context, key: String, at: Long) {
+        context.dataStore.edit {
+            it[KEY_PING_KEY] = key
+            it[KEY_PING_AT] = at
+        }
     }
 
     /** One-off read (callers that don't keep their own collector). */

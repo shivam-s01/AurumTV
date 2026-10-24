@@ -21,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -37,6 +38,9 @@ import com.aurum.musictv.ui.theme.AurumColors
 import com.aurum.musictv.ui.util.adaptiveClickable
 import com.aurum.musictv.ui.util.isTouchDevice
 import com.aurum.musictv.ui.util.rememberClickFocusRequester
+import com.aurum.musictv.update.UpdateManager
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 /**
  * Full Settings screen — Network + Playback prefs (Audio Quality, Autoplay) + Storage (Clear Cache) + Account
@@ -51,6 +55,11 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = viewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val context = LocalContext.current
+    // Only the label is observed, so download progress doesn't recompose this list.
+    val updateLabel by remember {
+        UpdateManager.ui.map { UpdateManager.statusLabel(it) }.distinctUntilChanged()
+    }.collectAsState(initial = "Tap to check")
 
     LaunchedEffect(state.cacheCleared) {
         if (state.cacheCleared) {
@@ -151,6 +160,17 @@ fun SettingsScreen(
                     description = "Stops Home banner auto-rotation and fades (smoother on low-RAM TVs)",
                     checked = state.settings.reduceMotion,
                     onToggle = viewModel::setReduceMotion,
+                )
+            }
+        }
+
+        item { SectionHeader("Software update") }
+        item {
+            SettingsGroup {
+                ActionRow(
+                    label = "Check for updates",
+                    valueLabel = updateLabel,
+                    onClick = { UpdateManager.checkOrReopen(context) },
                 )
             }
         }

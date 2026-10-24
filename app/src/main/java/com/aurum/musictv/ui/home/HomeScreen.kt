@@ -56,6 +56,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.tv.material3.Text
+import coil.imageLoader
+import coil.request.ImageRequest
 import com.aurum.musictv.data.model.Song
 import com.aurum.musictv.ui.components.SongCard
 import com.aurum.musictv.ui.theme.AurumColors
@@ -81,12 +83,14 @@ fun HomeScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
 
-    // Hero carousel spans multiple categories (see HomeViewModel.heroSongs);
-    // Continue Listening still takes priority as the very first frame so a
-    // returning listener sees their in-progress song immediately, before
-    // the carousel takes over.
-    val heroSongs = remember(state.continueListening, state.heroSongs) {
-        listOfNotNull(state.continueListening) + state.heroSongs.filter { it != state.continueListening }
+    // Hero: built by HeroPicker (stable priority order, de-duplicated, real
+    // songs with art only). It waits for the history fetch (or 1.8 s) so
+    // "Continue Listening" is slide 1 from the very first frame.
+    var heroWaited by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { delay(1_800); heroWaited = true }
+    val heroReady = state.userDataLoaded || heroWaited
+    val heroItems = remember(state.continueListening, state.recentlyPlayed, state.personalRows, state.sections) {
+        HeroPicker.build(state.continueListening, state.recentlyPlayed, state.personalRows, state.sections)
     }
 
     LazyColumn(
@@ -97,18 +101,17 @@ fun HomeScreen(
     ) {
         item {
             Box {
-                if (heroSongs.isNotEmpty()) {
+                if (heroReady && heroItems.isNotEmpty()) {
                     HeroCarousel(
-                        songs = heroSongs,
+                        items = heroItems,
                         reduceMotion = reduceMotion,
-                        continueId = state.continueListening?.id,
-                        // FIX: the queue is the hero list itself and the
-                        // tapped slide is the start index. It used to pass
-                        // the "continue listening" song (or the first row)
-                        // as the queue, so Play started a DIFFERENT song
-                        // (or restarted the same one) and looked dead.
-                        onPlayClick = { song -> onSongClick(song, heroSongs) },
+                        // Play starts the slide's own row (queue) at that song.
+                        onPlayClick = { item -> onSongClick(item.song, item.queue) },
                     )
+                } else if (state.isLoading || !heroReady) {
+                    // Reserve the hero's height while loading so the rows
+                    // below do not jump down when it appears.
+                    Box(modifier = Modifier.fillMaxWidth().height(HERO_HEIGHT))
                 }
                 TopBar(
                     greetingName = state.greetingName,
@@ -234,50 +237,66 @@ private fun HomeErrorState(message: String?, onRetry: () -> Unit) {
     }
 }
 
+private val HERO_HEIGHT = 400.dp
+
 /** Set once the hero Play button got the very first D-pad focus, so coming
  *  back to Home later does not steal focus from the sidebar again. */
 private var heroInitialFocusDone = false
 
 /**
- * Horizontal hero: text + Play on the left, album art card on the right over
- * a dimmed copy of the same art. Slides sideways (new slide enters from the
- * right) every 7 s; remote Right/Left or a finger swipe moves it by hand and
- * restarts the timer. Only ONE slide is composed at a time and the slide
- * animation is a draw-phase transform (no recomposition per frame), which is
- * what keeps it smooth on a 1 GB box. With "Reduce motion" it never moves.
+ * Horizontal hero: caption + title + artist + Play on the left, album art
+ * card on the right over a dimmed copy of the same art. Slides sideways
+ * every 7 s; remote Right/Left or a swipe moves it by hand and restarts the
+ * timer. Only ONE slide is composed at a time and the slide animation is a
+ * draw-phase transform, which keeps it smooth on a 1 GB box.
+ *
+ * The current slide is tracked by SONG ID, not position: when rows finish
+ * loading and the list changes, the person keeps seeing the same song.
  */
 @Composable
 private fun HeroCarousel(
-    songs: List<Song>,
+    items: List<HeroItem>,
     reduceMotion: Boolean,
-    continueId: String?,
-    onPlayClick: (Song) -> Unit,
+    onPlayClick: (HeroItem) -> Unit,
 ) {
-    val count = songs.size
+    val count = items.size
     if (count == 0) return
 
-    var index by remember { mutableIntStateOf(0) }
+    var currentId by remember { mutableStateOf<String?>(null) }
     var direction by remember { mutableIntStateOf(1) }
-    val safeIndex = index.coerceIn(0, count - 1)
-    val song = songs[safeIndex]
+    val safeIndex = items.indexOfFirst { it.song.id == currentId }.let { if (it < 0) 0 else it }
+    val item = items[safeIndex]
+    val song = item.song
 
     fun go(delta: Int) {
         if (count <= 1) return
         direction = if (delta >= 0) 1 else -1
-        index = (safeIndex + delta + count) % count
+        currentId = items[(safeIndex + delta + count) % count].song.id
     }
 
-    // Auto-advance. Keyed on safeIndex, so any manual move restarts the 7 s.
-    LaunchedEffect(safeIndex, count, reduceMotion) {
+    // Auto-advance. Keyed on the song, so any manual move restarts the 7 s.
+    LaunchedEffect(song.id, count, reduceMotion) {
         if (count <= 1 || reduceMotion) return@LaunchedEffect
         delay(7_000)
         direction = 1
-        index = (safeIndex + 1) % count
+        currentId = items[(safeIndex + 1) % count].song.id
+    }
+
+    // Warm the next slide's art so it is already decoded when the slide
+    // arrives (no empty art box while the image loads).
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(song.id, count) {
+        if (count <= 1) return@LaunchedEffect
+        val next = items[(safeIndex + 1) % count].song
+        val url = com.aurum.musictv.ui.util.bigArt(next.albumArtUrl) ?: return@LaunchedEffect
+        context.imageLoader.enqueue(
+            ImageRequest.Builder(context).data(url).build()
+        )
     }
 
     // A fresh Animatable per slide starts at +-1 (off to the side) on the very
     // first frame, so there is no one-frame flash of the new slide in place.
-    val slide = remember(safeIndex) { Animatable(if (reduceMotion) 0f else direction.toFloat()) }
+    val slide = remember(song.id) { Animatable(if (reduceMotion) 0f else direction.toFloat()) }
     LaunchedEffect(slide) {
         if (slide.value != 0f) slide.animateTo(0f, tween(420, easing = FastOutSlowInEasing))
     }
@@ -292,10 +311,15 @@ private fun HeroCarousel(
         }
     }
 
+    val artUrl = remember(song.id) { com.aurum.musictv.ui.util.bigArt(song.albumArtUrl) }
+    val artRequest = remember(artUrl) {
+        ImageRequest.Builder(context).data(artUrl).crossfade(if (reduceMotion) 0 else 250).build()
+    }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(400.dp)
+            .height(HERO_HEIGHT)
             .onKeyEvent { ev ->
                 if (ev.type != KeyEventType.KeyDown || count <= 1) return@onKeyEvent false
                 when (ev.key) {
@@ -305,7 +329,7 @@ private fun HeroCarousel(
                     else -> false
                 }
             }
-            .pointerInput(count, safeIndex) {
+            .pointerInput(count, song.id) {
                 var total = 0f
                 detectHorizontalDragGestures(
                     onDragStart = { total = 0f },
@@ -320,11 +344,11 @@ private fun HeroCarousel(
         // Ambient background: same art, dimmed. Upscaling a 600px image is
         // the "blur" - free, unlike Modifier.blur.
         coil.compose.AsyncImage(
-            model = com.aurum.musictv.ui.util.bigArt(song.albumArtUrl),
+            model = artRequest,
             contentDescription = null,
             modifier = Modifier
                 .fillMaxSize()
-                .graphicsLayer { alpha = 0.30f * (1f - abs(slide.value)) },
+                .graphicsLayer { alpha = 0.30f * (1f - 0.5f * abs(slide.value)) },
             contentScale = androidx.compose.ui.layout.ContentScale.Crop,
         )
         Box(
@@ -364,13 +388,16 @@ private fun HeroCarousel(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = if (song.id == continueId) "CONTINUE LISTENING" else "FEATURED",
+                    text = item.label,
                     color = AurumColors.Gold,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 1.6.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = song.title,
+                    text = HeroPicker.displayTitle(song.title),
                     color = AurumColors.TextPrimary,
                     fontSize = 38.sp,
                     fontWeight = FontWeight.Bold,
@@ -379,7 +406,7 @@ private fun HeroCarousel(
                     modifier = Modifier.padding(top = 6.dp),
                 )
                 Text(
-                    text = song.artist,
+                    text = HeroPicker.displayArtist(song.artist),
                     color = AurumColors.TextSecondary,
                     fontSize = 18.sp,
                     maxLines = 1,
@@ -387,10 +414,10 @@ private fun HeroCarousel(
                     modifier = Modifier.padding(top = 4.dp, bottom = 22.dp),
                 )
                 androidx.tv.material3.Surface(
-                    onClick = { onPlayClick(song) },
+                    onClick = { onPlayClick(item) },
                     modifier = Modifier
                         .then(if (!isTouch) Modifier.focusRequester(playFocus) else Modifier)
-                        .adaptiveClickable(playFocus, isTouch) { onPlayClick(song) },
+                        .adaptiveClickable(playFocus, isTouch) { onPlayClick(item) },
                     shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(
                         shape = RoundedCornerShape(10.dp),
                     ),
@@ -436,7 +463,7 @@ private fun HeroCarousel(
                 }
             }
             coil.compose.AsyncImage(
-                model = com.aurum.musictv.ui.util.bigArt(song.albumArtUrl),
+                model = artRequest,
                 contentDescription = song.title,
                 modifier = Modifier
                     .size(280.dp)

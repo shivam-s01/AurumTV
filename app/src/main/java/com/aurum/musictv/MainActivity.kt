@@ -41,7 +41,11 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.aurum.musictv.data.model.Song
 import com.aurum.musictv.player.PlayerManager
+import com.aurum.musictv.data.remote.SupabaseClientProvider
 import com.aurum.musictv.sync.AuthRepository
+import com.aurum.musictv.telemetry.DeviceTelemetry
+import com.aurum.musictv.ui.update.UpdateDialogHost
+import com.aurum.musictv.update.UpdateManager
 import com.aurum.musictv.ui.auth.AuthScreen
 import com.aurum.musictv.ui.components.BannerData
 import com.aurum.musictv.ui.components.TopBanner
@@ -80,6 +84,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // User may have just allowed "Install unknown apps" for the update.
+        UpdateManager.onResume(this)
     }
 
 }
@@ -129,6 +139,21 @@ private fun AurumApp(playerManager: PlayerManager) {
 
     LaunchedEffect(screen) {
         homeViewModel.setHomeVisible(screen is Screen.Home)
+    }
+
+    // Background housekeeping, deliberately late so it never competes with
+    // Home loading on a weak box: (1) look for an app update (max once / 6 h),
+    // (2) tell the backend this TV exists + which account is connected
+    // (max once / 12 h, again only when the account or version changes).
+    LaunchedEffect(Unit) {
+        delay(5_000)
+        val appCtx = context.applicationContext
+        UpdateManager.checkOnLaunch(appCtx)
+        AuthRepository.awaitReady()
+        AuthRepository.sessionStatus
+            .map { SupabaseClientProvider.auth.currentUserOrNull()?.id }
+            .distinctUntilChanged()
+            .collect { DeviceTelemetry.ping(appCtx) }
     }
 
     fun openPlayer() {
@@ -241,6 +266,7 @@ private fun AurumApp(playerManager: PlayerManager) {
             onDone = { banner = null },
             modifier = Modifier.align(Alignment.TopCenter),
         )
+        UpdateDialogHost()
     }
 }
 

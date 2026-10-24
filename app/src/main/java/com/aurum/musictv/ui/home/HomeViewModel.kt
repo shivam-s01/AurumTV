@@ -19,8 +19,10 @@ data class HomeUiState(
     val avatarUrl: String? = null,
     /** Last song played on any device (phone or TV) — from the shared history. */
     val continueListening: Song? = null,
-    /** Hero carousel: one random pick per section, filled as rows arrive. */
-    val heroSongs: List<Song> = emptyList(),
+    /** True once the first history fetch finished (even if empty / signed
+     *  out). The hero waits for it so "Continue Listening" is slide 1 from
+     *  the first frame instead of popping in later. */
+    val userDataLoaded: Boolean = false,
     /** Browse rows, in display order; they appear one by one as they load. */
     val sections: List<Pair<String, List<Song>>> = emptyList(),
     val recentlyPlayed: List<Song> = emptyList(),
@@ -82,13 +84,8 @@ class HomeViewModel : ViewModel() {
                     rows.add(row)
                     val sorted = rows.sortedBy { it.index }
                     _uiState.update { state ->
-                        // Hero: keep what's already shown, add one pick from each new row.
-                        val hero = if (state.heroSongs.size < 6 && row.songs.isNotEmpty()) {
-                            state.heroSongs + row.songs.random()
-                        } else state.heroSongs
                         state.copy(
                             sections = sorted.map { it.title to it.songs },
-                            heroSongs = hero,
                             isLoading = false,
                         )
                     }
@@ -116,7 +113,9 @@ class HomeViewModel : ViewModel() {
                 it.copy(greetingName = AuthRepository.displayName, avatarUrl = AuthRepository.avatarUrl)
             }
             val recent = runCatching { SyncRepository.fetchRecentlyPlayed(limit = 30) }.getOrDefault(emptyList())
-            _uiState.update { it.copy(recentlyPlayed = recent, continueListening = recent.firstOrNull()) }
+            _uiState.update {
+                it.copy(recentlyPlayed = recent, continueListening = recent.firstOrNull(), userDataLoaded = true)
+            }
             loadPersonalRows(recent)
         }
         viewModelScope.launch {
