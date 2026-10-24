@@ -52,6 +52,18 @@ data class PlaylistRow(
     val data: JsonObject? = null,
 )
 
+/** Playlist header only (name/pin/order/cover) via JSON-path columns — no
+ *  songs. Playlist rows carry every song as JSON, so listing them whole
+ *  would download megabytes just to draw a list of names. */
+@Serializable
+data class PlaylistMetaRow(
+    val id: String,
+    val name: String? = null,
+    val pinned: String? = null,
+    val sort: String? = null,
+    val cover: String? = null,
+)
+
 @Serializable
 data class FavoriteUpsert(
     @SerialName("song_id") val songId: String,
@@ -74,7 +86,23 @@ data class TvPlaylist(
     val songs: List<Song>,
     val isPinned: Boolean,
     val sortOrder: Int,
+    val coverUrl: String? = null,
+    /** False for a header-only entry; songs are fetched when it is opened. */
+    val songsLoaded: Boolean = true,
 )
+
+fun PlaylistMetaRow.toHeaderOrNull(): TvPlaylist? {
+    val n = name?.takeIf { it.isNotBlank() } ?: return null
+    return TvPlaylist(
+        id = id,
+        name = n,
+        songs = emptyList(),
+        isPinned = pinned.equals("true", ignoreCase = true),
+        sortOrder = sort?.toDoubleOrNull()?.toInt() ?: 0,
+        coverUrl = cover?.takeIf { it.isNotBlank() },
+        songsLoaded = false,
+    )
+}
 
 // ── JSON <-> Song, matching lib/models/song.dart ────────────────────────
 

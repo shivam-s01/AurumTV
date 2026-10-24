@@ -9,7 +9,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -52,6 +56,19 @@ fun LibraryScreen(
 
     val openPlaylist = state.playlists.firstOrNull { it.id == state.openPlaylistId }
     BackHandler(enabled = openPlaylist != null) { viewModel.openPlaylist(null) }
+
+    // Liked Songs load a page at a time: when the last visible card is
+    // within 24 items of the end, the next page is fetched.
+    val gridState = rememberLazyGridState()
+    LaunchedEffect(gridState, state.tab) {
+        if (state.tab != LibraryTab.LIKED_SONGS) return@LaunchedEffect
+        snapshotFlow {
+            val info = gridState.layoutInfo
+            (info.visibleItemsInfo.lastOrNull()?.index ?: 0) to info.totalItemsCount
+        }.collect { (last, total) ->
+            if (total > 0 && last >= total - 24) viewModel.loadMoreLiked()
+        }
+    }
 
     val showPlaylistList = state.tab == LibraryTab.PLAYLISTS && openPlaylist == null
     val activeList = when {
@@ -109,16 +126,26 @@ fun LibraryScreen(
                 )
             }
 
-            showPlaylistList && state.playlists.isNotEmpty() -> Column(
+            // Lazy list: a phone with dozens of playlists scrolls instead of
+            // running off the screen, and only visible rows are composed.
+            showPlaylistList && state.playlists.isNotEmpty() -> LazyColumn(
+                contentPadding = PaddingValues(vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                state.playlists.forEach { pl ->
+                lazyItems(state.playlists, key = { it.id }) { pl ->
                     TabChip(
-                        label = "${pl.name}  ·  ${pl.songs.size} songs",
+                        label = pl.name,
                         selected = false,
                         onClick = { viewModel.openPlaylist(pl.id) },
                     )
                 }
+            }
+
+            openPlaylist != null && state.playlistLoading -> Box(
+                modifier = Modifier.fillMaxWidth().padding(top = 80.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("Loading playlist…", color = AurumColors.TextSecondary, fontSize = 16.sp)
             }
 
             state.isLoading -> Box(
@@ -144,6 +171,7 @@ fun LibraryScreen(
             }
 
             else -> LazyVerticalGrid(
+                state = gridState,
                 columns = GridCells.Fixed(6),
                 contentPadding = PaddingValues(top = 12.dp, bottom = 32.dp),
                 horizontalArrangement = Arrangement.spacedBy(20.dp),

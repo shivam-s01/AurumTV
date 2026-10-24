@@ -119,8 +119,8 @@ class HomeViewModel : ViewModel() {
             loadPersonalRows(recent)
         }
         viewModelScope.launch {
-            val liked = runCatching { SyncRepository.fetchLikedSongs() }.getOrDefault(emptyList())
-            _uiState.update { it.copy(likedSongs = liked.take(40)) }
+            val liked = runCatching { SyncRepository.fetchLikedSongs(limit = 40) }.getOrDefault(emptyList())
+            _uiState.update { it.copy(likedSongs = liked) }
         }
     }
 
