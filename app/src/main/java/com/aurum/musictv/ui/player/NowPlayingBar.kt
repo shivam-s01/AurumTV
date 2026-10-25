@@ -24,6 +24,10 @@ import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import com.aurum.musictv.ui.components.ArtThumb
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -57,23 +61,17 @@ fun NowPlayingBar(
     onOpen: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val state by playerManager.uiState.collectAsState()
+    // Everything except the ticking position: the bar no longer recomposes
+    // every second (only the thin progress line below does).
+    val state by remember(playerManager) {
+        playerManager.uiState.map { it.copy(positionMs = 0L) }.distinctUntilChanged()
+    }.collectAsState(initial = playerManager.uiState.value.copy(positionMs = 0L))
     val song = state.currentSong ?: return
-    val progress = if (state.durationMs > 0) {
-        (state.positionMs.toFloat() / state.durationMs.toFloat()).coerceIn(0f, 1f)
-    } else 0f
     val openFocusRequester = rememberClickFocusRequester()
     val isTouch = isTouchDevice()
 
     Column(modifier = modifier.fillMaxWidth().background(AurumColors.AmoledBgCard)) {
-        Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(AurumColors.AmoledDivider)) {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(progress)
-                    .background(AurumColors.Gold),
-            )
-        }
+        MiniProgress(playerManager)
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -83,6 +81,8 @@ fun NowPlayingBar(
                 onClick = onOpen,
                 modifier = Modifier.weight(1f).adaptiveClickable(openFocusRequester, isTouch, onOpen),
                 shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(10.dp)),
+                // A wide row must not zoom (it overlapped the buttons).
+                scale = ClickableSurfaceDefaults.scale(focusedScale = 1f, pressedScale = 1f),
                 colors = ClickableSurfaceDefaults.colors(
                     containerColor = androidx.compose.ui.graphics.Color.Transparent,
                     focusedContainerColor = AurumColors.AmoledBgElevated,
@@ -99,12 +99,7 @@ fun NowPlayingBar(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    AsyncImage(
-                        model = song.albumArtUrl,
-                        contentDescription = song.title,
-                        modifier = Modifier.size(48.dp).clip(RoundedCornerShape(8.dp)),
-                        contentScale = ContentScale.Crop,
-                    )
+                    ArtThumb(url = song.albumArtUrl, size = 48.dp, corner = 8.dp)
                     Column {
                         Text(
                             text = song.title,
@@ -137,6 +132,19 @@ fun NowPlayingBar(
             ) { playerManager.togglePlayPause() }
             BarButton(Icons.Filled.SkipNext, "Next") { playerManager.playNext() }
         }
+    }
+}
+
+/** 2 dp progress line: the only part of the mini player that follows the tick. */
+@Composable
+private fun MiniProgress(playerManager: PlayerManager) {
+    val pos by remember(playerManager) {
+        playerManager.uiState.map { it.positionMs to it.durationMs }.distinctUntilChanged()
+    }.collectAsState(initial = playerManager.uiState.value.let { it.positionMs to it.durationMs })
+    val (p, d) = pos
+    val f = if (d > 0) (p.toFloat() / d.toFloat()).coerceIn(0f, 1f) else 0f
+    Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(AurumColors.AmoledDivider)) {
+        Box(modifier = Modifier.fillMaxHeight().fillMaxWidth(f).background(AurumColors.Gold))
     }
 }
 

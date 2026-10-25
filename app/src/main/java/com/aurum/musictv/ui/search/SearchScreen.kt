@@ -1,6 +1,7 @@
 package com.aurum.musictv.ui.search
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items as rowItems
 import androidx.compose.runtime.rememberCoroutineScope
@@ -98,17 +99,17 @@ fun SearchScreen(
     val queryNow by rememberUpdatedState(query)
 
     Column(modifier = Modifier.fillMaxSize().padding(48.dp)) {
+        // Focus ring: the old "slightly darker background" was invisible on a
+        // TV, so a D-pad user could not tell the search box was selected.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(AurumColors.AmoledBgSurface)
-                .then(
-                    if (isFieldFocused) {
-                        Modifier.background(AurumColors.AmoledBgElevated)
-                    } else {
-                        Modifier
-                    }
+                .clip(RoundedCornerShape(12.dp))
+                .background(if (isFieldFocused) AurumColors.AmoledBgElevated else AurumColors.AmoledBgSurface)
+                .border(
+                    2.dp,
+                    if (isFieldFocused) AurumColors.Gold else androidx.compose.ui.graphics.Color.Transparent,
+                    RoundedCornerShape(12.dp),
                 ),
         ) {
             BasicTextField(
@@ -158,7 +159,7 @@ fun SearchScreen(
 
             LazyVerticalGrid(
                 columns = GridCells.Fixed(6),
-                contentPadding = PaddingValues(vertical = 16.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {

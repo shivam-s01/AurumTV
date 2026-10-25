@@ -60,11 +60,10 @@ fun SongCard(
     size: Dp = 160.dp,
 ) {
     var isFocused by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(
-        targetValue = if (isFocused && !LocalReduceMotion.current) 1.12f else 1f,
-        animationSpec = tween(durationMillis = 150),
-        label = "cardScale",
-    )
+    // ONE zoom only (tv-material's own, which was previously stacked on top
+    // of a manual 1.12x -> a 23% jump that overlapped neighbours and cut the
+    // focus ring). No zoom at all in Reduce motion.
+    val reduce = LocalReduceMotion.current
     val touchFocusRequester = rememberClickFocusRequester()
     val isTouch = isTouchDevice()
     // size = Dp.Unspecified -> "fluid": the card fills its grid cell exactly
@@ -83,11 +82,14 @@ fun SongCard(
         Surface(
             onClick = onClick,
             modifier = (if (fluid) Modifier.fillMaxWidth().aspectRatio(1f) else Modifier.size(size))
-                .graphicsLayer { scaleX = scale; scaleY = scale }
                 .onFocusChanged { isFocused = it.isFocused }
                 .adaptiveClickable(touchFocusRequester, isTouch, onClick),
             shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(
                 shape = RoundedCornerShape(10.dp),
+            ),
+            scale = androidx.tv.material3.ClickableSurfaceDefaults.scale(
+                focusedScale = if (reduce) 1f else 1.07f,
+                pressedScale = 0.98f,
             ),
             colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
                 containerColor = AurumColors.AmoledBgSurface,
@@ -130,7 +132,7 @@ fun SongCard(
             fontWeight = FontWeight.Medium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 8.dp, start = 2.dp, end = 2.dp),
+            modifier = Modifier.padding(top = 12.dp, start = 2.dp, end = 2.dp),
         )
         Text(
             text = song.artist,

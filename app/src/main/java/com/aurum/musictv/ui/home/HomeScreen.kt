@@ -36,6 +36,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -282,16 +285,26 @@ private fun HeroCarousel(
         currentId = items[(safeIndex + 1) % count].song.id
     }
 
-    // Warm the next slide's art so it is already decoded when the slide
-    // arrives (no empty art box while the image loads).
+    // Hero art: asked at the card's real pixel size (sharp on a 4K TV), full
+    // colour (RGB_565 bands on big gradients), and capped small in low-end
+    // mode. The warm-up below uses the exact same request so it is a cache hit.
     val context = androidx.compose.ui.platform.LocalContext.current
-    LaunchedEffect(song.id, count) {
+    val cardPx = with(androidx.compose.ui.platform.LocalDensity.current) { 280.dp.roundToPx() }
+    val maxPx = if (reduceMotion) 600 else 800
+    val decodePx = cardPx.coerceIn(600, maxPx)
+    fun heroRequest(url: String?, fadeMs: Int) =
+        ImageRequest.Builder(context)
+            .data(com.aurum.musictv.ui.util.artForPx(url, cardPx, maxPx))
+            .size(decodePx)
+            .bitmapConfig(android.graphics.Bitmap.Config.ARGB_8888)
+            .crossfade(fadeMs)
+            .build()
+
+    LaunchedEffect(song.id, count, decodePx) {
         if (count <= 1) return@LaunchedEffect
         val next = items[(safeIndex + 1) % count].song
-        val url = com.aurum.musictv.ui.util.bigArt(next.albumArtUrl) ?: return@LaunchedEffect
-        context.imageLoader.enqueue(
-            ImageRequest.Builder(context).data(url).build()
-        )
+        if (next.albumArtUrl.isNullOrBlank()) return@LaunchedEffect
+        context.imageLoader.enqueue(heroRequest(next.albumArtUrl, 0))
     }
 
     // A fresh Animatable per slide starts at +-1 (off to the side) on the very
@@ -311,9 +324,8 @@ private fun HeroCarousel(
         }
     }
 
-    val artUrl = remember(song.id) { com.aurum.musictv.ui.util.bigArt(song.albumArtUrl) }
-    val artRequest = remember(artUrl) {
-        ImageRequest.Builder(context).data(artUrl).crossfade(if (reduceMotion) 0 else 250).build()
+    val artRequest = remember(song.id, decodePx, reduceMotion) {
+        heroRequest(song.albumArtUrl, if (reduceMotion) 0 else 250)
     }
 
     Box(
@@ -368,9 +380,12 @@ private fun HeroCarousel(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
+                    // Fractions, not pixels: the fade looks the same on a
+                    // 720p and a 4K TV.
                     Brush.verticalGradient(
-                        colors = listOf(Color.Transparent, AurumColors.AmoledBg),
-                        startY = 160f,
+                        0f to Color.Transparent,
+                        0.38f to Color.Transparent,
+                        1f to AurumColors.AmoledBg,
                     ),
                 ),
         )
@@ -518,12 +533,19 @@ private fun TopBar(
                     ),
                 ),
             ) {
-                Text(
-                    "Search",
-                    color = AurumColors.TextPrimary,
-                    fontSize = 14.sp,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
-                )
+                Row(
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    androidx.tv.material3.Icon(
+                        imageVector = Icons.Filled.Search,
+                        contentDescription = null,
+                        tint = AurumColors.TextPrimary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text("Search", color = AurumColors.TextPrimary, fontSize = 14.sp)
+                }
             }
             val settingsFocusRequester = rememberClickFocusRequester()
             androidx.tv.material3.Surface(
@@ -544,7 +566,12 @@ private fun TopBar(
                 modifier = Modifier.size(40.dp).adaptiveClickable(settingsFocusRequester, isTouch, onSettingsClick),
             ) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("\u2699", color = AurumColors.TextSecondary, fontSize = 18.sp)
+                    androidx.tv.material3.Icon(
+                        imageVector = Icons.Filled.Settings,
+                        contentDescription = "Settings",
+                        tint = AurumColors.TextSecondary,
+                        modifier = Modifier.size(22.dp),
+                    )
                 }
             }
             ProfileAvatar(avatarUrl = avatarUrl, name = greetingName, onClick = onProfileClick)
@@ -585,6 +612,8 @@ private fun ProfileAvatar(avatarUrl: String?, name: String?, onClick: () -> Unit
 
 @Composable
 private fun SongRow(title: String, songs: List<Song>, onSongClick: (Song) -> Unit) {
+    // A repeated id would crash a keyed LazyRow; one song shows once per row.
+    val unique = remember(songs) { songs.distinctBy { it.id } }
     Column {
         Text(
             text = title,
@@ -601,7 +630,7 @@ private fun SongRow(title: String, songs: List<Song>, onSongClick: (Song) -> Uni
             contentPadding = PaddingValues(horizontal = 48.dp, vertical = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            items(songs, key = { it.id }) { song ->
+            items(unique, key = { it.id }) { song ->
                 SongCard(song = song, onClick = { onSongClick(song) })
             }
         }

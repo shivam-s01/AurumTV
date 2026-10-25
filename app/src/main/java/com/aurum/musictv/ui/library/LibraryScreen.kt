@@ -173,7 +173,9 @@ fun LibraryScreen(
             else -> LazyVerticalGrid(
                 state = gridState,
                 columns = GridCells.Fixed(6),
-                contentPadding = PaddingValues(top = 12.dp, bottom = 32.dp),
+                // Side padding: the focused card zooms and the grid clips to
+                // its bounds, which cut the focus ring on the outer columns.
+                contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 14.dp, bottom = 32.dp),
                 horizontalArrangement = Arrangement.spacedBy(20.dp),
                 verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {

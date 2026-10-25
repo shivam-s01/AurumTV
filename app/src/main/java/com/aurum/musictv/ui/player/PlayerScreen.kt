@@ -1,6 +1,16 @@
 package com.aurum.musictv.ui.player
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.graphicsLayer
+import com.aurum.musictv.ui.util.artForPx
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
@@ -98,12 +108,18 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 
 /**
- * Full player. Cover art drives the whole look: a dimmed, enlarged copy of
- * the art as backdrop, a soft glow in the art's own accent colour, a big
- * cover card, and the controls. Only the seek area listens to the 1-second
- * position ticks, so the rest of the screen does not recompose every second
- * (cheap on 1 GB boxes). Every control is a tv-material Surface so D-pad
- * users always see a focus ring.
+ * Full player. Cover art drives the whole look: the sharp cover on the left
+ * fading smoothly into the page colour, a page tint taken from the art's own
+ * accent colour, and the controls on the right. Only the seek area listens
+ * to the 1-second position ticks, so the rest of the screen does not
+ * recompose every second (cheap on 1 GB boxes). Every control is a
+ * tv-material Surface so D-pad users always see a focus ring.
+ *
+ * The cover is requested at the real pixel height of the screen (capped at
+ * 1200 px, or 800 px in low-end mode) in full ARGB colour, so it stays sharp
+ * and band-free on a big 4K TV. "Up next" takes the place of the controls
+ * (instead of covering them), so D-pad focus can never wander onto a hidden
+ * button.
  */
 @Composable
 fun PlayerScreen(playerManager: PlayerManager, onBack: () -> Unit) {
@@ -121,236 +137,292 @@ fun PlayerScreen(playerManager: PlayerManager, onBack: () -> Unit) {
     var showQueue by remember { mutableStateOf(false) }
     BackHandler(enabled = showQueue) { showQueue = false }
 
+    // Focus: Play on the first open, the "Up next" button when coming back
+    // from the queue list.
     val playFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) {
-        delay(150)
-        runCatching { playFocus.requestFocus() }
+    val queueButtonFocus = remember { FocusRequester() }
+    var focusedOnce by remember { mutableStateOf(false) }
+    LaunchedEffect(showQueue) {
+        if (!showQueue) {
+            val first = !focusedOnce
+            delay(if (first) 150L else 80L)
+            runCatching { if (first) playFocus.requestFocus() else queueButtonFocus.requestFocus() }
+            focusedOnce = true
+        }
     }
 
-    // Low-end mode (Reduce motion, on by default for 1 GB boxes): 600 px art,
-    // no crossfade. Everything else about the layout is identical.
+    // Low-end mode (Reduce motion, on by default for 1 GB boxes): smaller
+    // art, no crossfade, no entrance fade. The layout is identical.
     val lite = LocalReduceMotion.current
-    val art = remember(song.albumArtUrl, lite) {
-        if (lite) bigArt(song.albumArtUrl) else heroArt(song.albumArtUrl)
-    }
-    val accent = rememberArtAccent(art, AurumColors.Gold)
     val context = LocalContext.current
-    val artRequest = remember(art, lite) {
-        ImageRequest.Builder(context)
-            .data(art)
-            .size(if (lite) 600 else 1000)
-            .crossfade(!lite)
-            .build()
-    }
+    // The accent comes from the small card thumbnail (already in the cache
+    // from the grid), not from the big cover: no second big download.
+    val accent = rememberArtAccent(song.albumArtUrl, AurumColors.Gold)
     // Dark page colour with a breath of the cover's accent in it.
     val bg = lerp(Color(0xFF08080A), accent, 0.12f)
 
     var immersive by remember { mutableStateOf(false) }
     BackHandler(enabled = immersive) { immersive = false }
 
-    Box(modifier = Modifier.fillMaxSize().background(bg)) {
-      if (immersive) {
-        ImmersiveArt(
-            song = song,
-            request = artRequest,
-            accent = accent,
-            bg = bg,
-            playerManager = playerManager,
-            onExit = { immersive = false },
-        )
-      } else {
-        // The cover itself, sharp and full height on the left, fading into
-        // the page colour where the controls begin.
-        AsyncImage(
-            model = artRequest,
-            contentDescription = song.title,
-            modifier = Modifier.align(Alignment.CenterStart).fillMaxHeight().aspectRatio(1f),
-            contentScale = ContentScale.Crop,
-        )
-        Box(
-            modifier = Modifier.fillMaxSize().background(
-                Brush.horizontalGradient(
-                    0f to Color.Transparent,
-                    0.30f to Color.Transparent,
-                    0.56f to bg,
-                    1f to bg,
+    // Soft fade-in when the player opens (draw-phase only, skipped in lite).
+    val enter = remember { Animatable(if (lite) 1f else 0f) }
+    LaunchedEffect(Unit) {
+        if (enter.value < 1f) enter.animateTo(1f, tween(260))
+    }
+
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(bg)
+            .graphicsLayer { alpha = enter.value },
+    ) {
+        // The cover is a square as tall as the screen; this is how much of
+        // the width it covers (0.5625 on a 16:9 TV).
+        val artFrac = (maxHeight / maxWidth).coerceIn(0.35f, 0.65f)
+        val sidePx = constraints.maxHeight
+        val maxArtPx = if (lite) 800 else 1200
+        val art = remember(song.albumArtUrl, sidePx, maxArtPx) {
+            artForPx(song.albumArtUrl, sidePx, maxArtPx)
+        }
+        val artRequest = remember(art, sidePx, lite) {
+            ImageRequest.Builder(context)
+                .data(art)
+                .size(sidePx.coerceIn(600, maxArtPx))
+                // Full colour: RGB_565 (the app default) bands visibly on a
+                // big cover. One bitmap, so the cost is small.
+                .bitmapConfig(android.graphics.Bitmap.Config.ARGB_8888)
+                .crossfade(!lite)
+                .build()
+        }
+
+        if (immersive) {
+            ImmersiveArt(
+                song = song,
+                request = artRequest,
+                accent = accent,
+                bg = bg,
+                playerManager = playerManager,
+                onExit = { immersive = false },
+            )
+        } else {
+            // The cover itself, sharp and full height on the left...
+            AsyncImage(
+                model = artRequest,
+                contentDescription = song.title,
+                modifier = Modifier.align(Alignment.CenterStart).fillMaxHeight().aspectRatio(1f),
+                contentScale = ContentScale.Crop,
+            )
+            // ...fading into the page colour along an eased curve (a straight
+            // two-point fade shows a visible edge on a large screen).
+            Box(
+                modifier = Modifier.fillMaxSize().background(
+                    Brush.horizontalGradient(
+                        0f to Color.Transparent,
+                        artFrac * 0.52f to Color.Transparent,
+                        artFrac * 0.72f to bg.copy(alpha = 0.35f),
+                        artFrac * 0.88f to bg.copy(alpha = 0.80f),
+                        artFrac + 0.03f to bg,
+                        1f to bg,
+                    ),
                 ),
-            ),
-        )
+            )
 
-        BackPill(
-            onClick = onBack,
-            modifier = Modifier.align(Alignment.TopStart).padding(start = 32.dp, top = 24.dp),
-        )
+            BackPill(
+                onClick = onBack,
+                modifier = Modifier.align(Alignment.TopStart).padding(start = 32.dp, top = 24.dp),
+            )
 
-        Row(
-            modifier = Modifier.fillMaxSize().padding(end = 64.dp, top = 40.dp, bottom = 32.dp),
-        ) {
-            Spacer(modifier = Modifier.weight(0.54f))
-
-            Column(
-                modifier = Modifier.weight(0.46f).fillMaxHeight(),
-                verticalArrangement = Arrangement.Center,
+            val leftWeight = (artFrac - 0.015f).coerceIn(0.3f, 0.62f)
+            Row(
+                modifier = Modifier.fillMaxSize().padding(end = 64.dp, top = 40.dp, bottom = 32.dp),
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.Top,
-                ) {
-                    Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
-                        Text(
-                            text = if (state.isResolving || state.isBuffering) "LOADING…" else "NOW PLAYING",
-                            color = accent,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            letterSpacing = 2.sp,
-                        )
-                        Text(
-                            text = song.title,
-                            color = AurumColors.TextPrimary,
-                            fontSize = 34.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(top = 6.dp),
-                        )
-                        Text(
-                            text = song.artist,
-                            color = AurumColors.TextSecondary,
-                            fontSize = 18.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
-                        )
-                    }
-                    LikeButton(
-                        liked = state.isCurrentSongLiked,
+                Spacer(modifier = Modifier.weight(leftWeight))
+
+                if (showQueue) {
+                    QueuePanel(
+                        queue = state.queue,
+                        currentIndex = state.currentIndex,
+                        isPlaying = state.isPlaying,
                         accent = accent,
-                        onClick = { playerManager.toggleLikeCurrentSong() },
+                        onPlay = { playerManager.playAt(it) },
+                        onTogglePlay = { playerManager.togglePlayPause() },
+                        modifier = Modifier.weight(1f - leftWeight).fillMaxHeight(),
                     )
-                }
-
-                SeekSection(playerManager = playerManager, accent = accent)
-
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TransportButton(
-                        icon = Icons.Filled.SkipPrevious,
-                        contentDescription = "Previous",
-                        size = 28.dp,
-                        tint = AurumColors.TextPrimary,
-                        onClick = { playerManager.playPrevious() },
-                    )
-                    Box(modifier = Modifier.padding(horizontal = 24.dp)) {
-                        TransportButton(
-                            icon = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                            contentDescription = "Play/Pause",
-                            size = 40.dp,
-                            tint = AurumColors.AmoledBg,
-                            background = accent,
-                            focusRequester = playFocus,
-                            onClick = { playerManager.togglePlayPause() },
-                        )
+                } else {
+                    var hint by remember { mutableStateOf<String?>(null) }
+                    val onHint: (String, Boolean) -> Unit = { label, focused ->
+                        if (focused) {
+                            hint = label
+                        } else if (hint == label) {
+                            hint = null
+                        }
                     }
-                    TransportButton(
-                        icon = Icons.Filled.SkipNext,
-                        contentDescription = "Next",
-                        size = 28.dp,
-                        tint = AurumColors.TextPrimary,
-                        onClick = { playerManager.playNext() },
-                    )
-                }
 
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    ModeButton(
-                        icon = Icons.Filled.Shuffle,
-                        label = "Shuffle",
-                        active = state.shuffleOn,
-                        accent = accent,
-                        onClick = { playerManager.toggleShuffle() },
-                    )
-                    Box(modifier = Modifier.padding(horizontal = 12.dp)) {
-                        ModeButton(
-                            icon = if (state.repeatMode == RepeatMode.ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat,
-                            label = when (state.repeatMode) {
-                                RepeatMode.OFF -> "Repeat"
-                                RepeatMode.ALL -> "Repeat all"
-                                RepeatMode.ONE -> "Repeat one"
-                            },
-                            active = state.repeatMode != RepeatMode.OFF,
-                            accent = accent,
-                            onClick = { playerManager.cycleRepeat() },
-                        )
-                    }
-                    ModeButton(
-                        icon = Icons.Filled.Timer,
-                        label = if (state.sleepMinutes > 0) "Sleep ${state.sleepMinutes}m" else "Sleep",
-                        active = state.sleepMinutes > 0,
-                        accent = accent,
-                        onClick = { playerManager.cycleSleepTimer() },
-                    )
-                    Box(modifier = Modifier.padding(start = 12.dp)) {
-                        ModeButton(
-                            icon = Icons.Filled.Fullscreen,
-                            label = "Full art",
-                            active = false,
-                            accent = accent,
-                            onClick = { immersive = true },
-                        )
-                    }
-                    Box(modifier = Modifier.padding(start = 12.dp)) {
-                        ModeButton(
-                            icon = Icons.Filled.QueueMusic,
-                            label = "Up next",
-                            active = showQueue,
-                            accent = accent,
-                            onClick = { showQueue = !showQueue },
-                        )
-                    }
-                }
-
-                // One-line peek at what comes next (with its cover).
-                state.queue.getOrNull(state.currentIndex + 1)?.let { next ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 18.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    Column(
+                        modifier = Modifier.weight(1f - leftWeight).fillMaxHeight(),
+                        verticalArrangement = Arrangement.Center,
                     ) {
-                        ArtThumb(url = next.albumArtUrl, size = 40.dp, corner = 8.dp)
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("UP NEXT", color = accent, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.6.sp)
-                            Text(
-                                text = "${next.title} · ${next.artist}",
-                                color = AurumColors.TextSecondary,
-                                fontSize = 13.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Top,
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                                Text(
+                                    text = if (state.isResolving || state.isBuffering) "LOADING…" else "NOW PLAYING",
+                                    color = accent,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    letterSpacing = 2.sp,
+                                )
+                                Text(
+                                    text = song.title,
+                                    color = AurumColors.TextPrimary,
+                                    fontSize = 34.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(top = 6.dp),
+                                )
+                                Text(
+                                    text = song.artist,
+                                    color = AurumColors.TextSecondary,
+                                    fontSize = 18.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
+                                )
+                            }
+                            LikeButton(
+                                liked = state.isCurrentSongLiked,
+                                accent = accent,
+                                onClick = { playerManager.toggleLikeCurrentSong() },
                             )
+                        }
+
+                        SeekSection(playerManager = playerManager, accent = accent)
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TransportButton(
+                                icon = Icons.Filled.SkipPrevious,
+                                contentDescription = "Previous",
+                                size = 28.dp,
+                                tint = AurumColors.TextPrimary,
+                                onClick = { playerManager.playPrevious() },
+                            )
+                            Box(modifier = Modifier.padding(horizontal = 24.dp)) {
+                                TransportButton(
+                                    icon = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                    contentDescription = "Play/Pause",
+                                    size = 40.dp,
+                                    tint = AurumColors.AmoledBg,
+                                    background = accent,
+                                    focusRequester = playFocus,
+                                    onClick = { playerManager.togglePlayPause() },
+                                )
+                            }
+                            TransportButton(
+                                icon = Icons.Filled.SkipNext,
+                                contentDescription = "Next",
+                                size = 28.dp,
+                                tint = AurumColors.TextPrimary,
+                                onClick = { playerManager.playNext() },
+                            )
+                        }
+
+                        // Five round icon buttons: they always fit the column
+                        // (the old text pills overflowed it on a 16:9 TV). The
+                        // focused one names itself on the line below, which
+                        // has a fixed height, so nothing ever shifts.
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                            horizontalArrangement = Arrangement.spacedBy(14.dp, Alignment.CenterHorizontally),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            ModeButton(
+                                icon = Icons.Filled.Shuffle,
+                                label = if (state.shuffleOn) "Shuffle on" else "Shuffle off",
+                                active = state.shuffleOn,
+                                accent = accent,
+                                onHint = onHint,
+                                onClick = { playerManager.toggleShuffle() },
+                            )
+                            ModeButton(
+                                icon = if (state.repeatMode == RepeatMode.ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat,
+                                label = when (state.repeatMode) {
+                                    RepeatMode.OFF -> "Repeat off"
+                                    RepeatMode.ALL -> "Repeat all"
+                                    RepeatMode.ONE -> "Repeat one"
+                                },
+                                active = state.repeatMode != RepeatMode.OFF,
+                                accent = accent,
+                                onHint = onHint,
+                                onClick = { playerManager.cycleRepeat() },
+                            )
+                            ModeButton(
+                                icon = Icons.Filled.Timer,
+                                label = if (state.sleepMinutes > 0) "Sleep timer · ${state.sleepMinutes} min" else "Sleep timer",
+                                active = state.sleepMinutes > 0,
+                                accent = accent,
+                                badge = if (state.sleepMinutes > 0) "${state.sleepMinutes}m" else null,
+                                onHint = onHint,
+                                onClick = { playerManager.cycleSleepTimer() },
+                            )
+                            ModeButton(
+                                icon = Icons.Filled.Fullscreen,
+                                label = "Full screen art",
+                                active = false,
+                                accent = accent,
+                                onHint = onHint,
+                                onClick = { immersive = true },
+                            )
+                            ModeButton(
+                                icon = Icons.Filled.QueueMusic,
+                                label = "Up next",
+                                active = false,
+                                accent = accent,
+                                focusRequester = queueButtonFocus,
+                                onHint = onHint,
+                                onClick = { showQueue = true },
+                            )
+                        }
+                        Box(
+                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp).height(18.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            hint?.let {
+                                Text(it, color = AurumColors.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
+
+                        // One-line peek at what comes next (with its cover).
+                        state.queue.getOrNull(state.currentIndex + 1)?.let { next ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                ArtThumb(url = next.albumArtUrl, size = 40.dp, corner = 8.dp)
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("UP NEXT", color = accent, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.6.sp)
+                                    Text(
+                                        text = "${next.title} · ${next.artist}",
+                                        color = AurumColors.TextSecondary,
+                                        fontSize = 13.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
             }
         }
-
-        if (showQueue) {
-            QueuePanel(
-                queue = state.queue,
-                currentIndex = state.currentIndex,
-                isPlaying = state.isPlaying,
-                accent = accent,
-                onPlay = { playerManager.playAt(it) },
-                onTogglePlay = { playerManager.togglePlayPause() },
-                modifier = Modifier.align(Alignment.CenterEnd),
-            )
-        }
-      }
     }
 }
 
@@ -477,7 +549,9 @@ private fun SeekSection(playerManager: PlayerManager, accent: Color) {
 /**
  * Seek bar. Remote: focus it and press Left/Right to jump 10 s. Touch: tap
  * anywhere or drag; the song is seeked once when the finger lifts (one
- * network seek, not one per pixel).
+ * network seek, not one per pixel). The fill glides between the 1-second
+ * position ticks and is drawn in the draw phase only (no recomposition per
+ * frame); low-end mode just steps once a second.
  */
 @Composable
 private fun SeekBar(
@@ -491,7 +565,16 @@ private fun SeekBar(
     var dragFraction by remember { mutableStateOf<Float?>(null) }
     val seekFraction by rememberUpdatedState(onSeekFraction)
     val seekBy by rememberUpdatedState(onSeekBy)
-    val shown = dragFraction ?: progress
+    val lite = LocalReduceMotion.current
+
+    val glide = remember { Animatable(progress) }
+    LaunchedEffect(progress, lite) {
+        val gap = progress - glide.value
+        // Seeks, repeats and song changes jump; normal playback glides.
+        if (lite || gap < 0f || gap > 0.05f) glide.snapTo(progress)
+        else glide.animateTo(progress, tween(1000, easing = LinearEasing))
+    }
+    val barHeight by animateDpAsState(if (focused) 10.dp else 5.dp, tween(120), label = "seekHeight")
 
     Box(
         modifier = Modifier
@@ -525,24 +608,32 @@ private fun SeekBar(
                     change.consume()
                     if (widthPx > 0) dragFraction = (change.position.x / widthPx).coerceIn(0f, 1f)
                 }
+            }
+            // Knob: only while the bar is focused or being dragged.
+            .drawBehind {
+                if (focused || dragFraction != null) {
+                    val r = 8.dp.toPx()
+                    val f = dragFraction ?: glide.value
+                    drawCircle(
+                        color = Color.White,
+                        radius = r,
+                        center = Offset((size.width * f).coerceIn(r, size.width - r), size.height / 2f),
+                    )
+                }
             },
         contentAlignment = Alignment.CenterStart,
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(if (focused) 10.dp else 5.dp)
+                .height(barHeight)
                 .clip(RoundedCornerShape(5.dp))
-                .background(Color.White.copy(alpha = 0.16f)),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(shown)
-                    .clip(RoundedCornerShape(5.dp))
-                    .background(accent),
-            )
-        }
+                .background(Color.White.copy(alpha = 0.16f))
+                .drawBehind {
+                    val f = dragFraction ?: glide.value
+                    drawRect(color = accent, size = Size(size.width * f, size.height))
+                },
+        )
     }
 }
 
@@ -579,13 +670,7 @@ private fun QueuePanel(
         runCatching { firstFocus.requestFocus() }
     }
 
-    Column(
-        modifier = modifier
-            .width(470.dp)
-            .fillMaxHeight()
-            .background(Brush.horizontalGradient(listOf(Color.Black.copy(alpha = 0.90f), Color(0xFF070709))))
-            .padding(top = 28.dp),
-    ) {
+    Column(modifier = modifier) {
         Text(
             "Now playing",
             color = accent,
@@ -595,7 +680,13 @@ private fun QueuePanel(
             modifier = Modifier.padding(start = 28.dp, bottom = 8.dp),
         )
         if (current != null) {
-            NowPlayingRow(song = current, isPlaying = isPlaying, accent = accent, onClick = onTogglePlay)
+            NowPlayingRow(
+                song = current,
+                isPlaying = isPlaying,
+                accent = accent,
+                requester = if (upcoming.isEmpty()) firstFocus else null,
+                onClick = onTogglePlay,
+            )
         }
         Box(
             modifier = Modifier
@@ -636,7 +727,13 @@ private fun QueuePanel(
 }
 
 @Composable
-private fun NowPlayingRow(song: Song, isPlaying: Boolean, accent: Color, onClick: () -> Unit) {
+private fun NowPlayingRow(
+    song: Song,
+    isPlaying: Boolean,
+    accent: Color,
+    requester: FocusRequester?,
+    onClick: () -> Unit,
+) {
     val touchRequester = rememberClickFocusRequester()
     val isTouch = isTouchDevice()
     Surface(
@@ -652,9 +749,11 @@ private fun NowPlayingRow(song: Song, isPlaying: Boolean, accent: Color, onClick
                 shape = RoundedCornerShape(14.dp),
             ),
         ),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f, pressedScale = 1f),
         modifier = Modifier
             .padding(horizontal = 16.dp)
             .fillMaxWidth()
+            .then(if (requester != null && !isTouch) Modifier.focusRequester(requester) else Modifier)
             .adaptiveClickable(touchRequester, isTouch, onClick),
     ) {
         Row(
@@ -707,6 +806,7 @@ private fun QueueRow(song: Song, requester: FocusRequester?, accent: Color, onCl
                 shape = RoundedCornerShape(12.dp),
             ),
         ),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f, pressedScale = 1f),
         modifier = Modifier
             .fillMaxWidth()
             .then(if (requester != null && !isTouch) Modifier.focusRequester(requester) else Modifier)
@@ -778,41 +878,48 @@ private fun BackPill(onClick: () -> Unit, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ModeButton(icon: ImageVector, label: String, active: Boolean, accent: Color, onClick: () -> Unit) {
-    val focusRequester = rememberClickFocusRequester()
+private fun ModeButton(
+    icon: ImageVector,
+    label: String,
+    active: Boolean,
+    accent: Color,
+    onHint: (String, Boolean) -> Unit,
+    onClick: () -> Unit,
+    badge: String? = null,
+    focusRequester: FocusRequester? = null,
+) {
+    val touchRequester = focusRequester ?: rememberClickFocusRequester()
     val isTouch = isTouchDevice()
     Surface(
         onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(22.dp)),
+        shape = ClickableSurfaceDefaults.shape(shape = CircleShape),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (active) accent.copy(alpha = 0.28f) else Color.White.copy(alpha = 0.08f),
+            containerColor = if (active) accent.copy(alpha = 0.26f) else Color.White.copy(alpha = 0.08f),
             focusedContainerColor = AurumColors.AmoledBgElevated,
         ),
         border = ClickableSurfaceDefaults.border(
             focusedBorder = Border(
-                border = androidx.compose.foundation.BorderStroke(2.dp, AurumColors.Gold),
-                shape = RoundedCornerShape(22.dp),
+                border = BorderStroke(2.dp, AurumColors.Gold),
+                shape = CircleShape,
             ),
         ),
-        modifier = Modifier.adaptiveClickable(focusRequester, isTouch, onClick),
+        modifier = Modifier
+            .size(48.dp)
+            .onFocusChanged { onHint(label, it.isFocused) }
+            .then(if (focusRequester != null && !isTouch) Modifier.focusRequester(focusRequester) else Modifier)
+            .adaptiveClickable(touchRequester, isTouch, onClick),
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = label,
-                tint = if (active) accent else AurumColors.TextSecondary,
-                modifier = Modifier.size(20.dp),
-            )
-            Text(
-                label,
-                color = if (active) accent else AurumColors.TextSecondary,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-            )
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            if (badge != null) {
+                Text(badge, color = accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            } else {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = label,
+                    tint = if (active) accent else AurumColors.TextSecondary,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
         }
     }
 }

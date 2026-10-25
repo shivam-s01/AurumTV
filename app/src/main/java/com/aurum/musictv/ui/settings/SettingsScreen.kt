@@ -270,10 +270,9 @@ private fun RowContainer(content: @Composable () -> Unit) {
 
 @Composable
 private fun InfoRow(label: String, valueLabel: String) {
-    RowContainer {
-        Text(label, color = AurumColors.TextPrimary, fontSize = 16.sp)
-        Text(valueLabel, color = AurumColors.TextSecondary, fontSize = 14.sp)
-    }
+    // Focusable on purpose: the list only scrolls with D-pad focus, so
+    // plain text rows at the bottom (Device Info) were unreachable.
+    ActionRow(label = label, valueLabel = valueLabel, onClick = {})
 }
 
 @Composable
