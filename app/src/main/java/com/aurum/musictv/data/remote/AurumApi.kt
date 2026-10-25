@@ -57,7 +57,7 @@ object AurumApi {
     private const val HOME_CONCURRENCY = 3
 
     // Search: native NewPipe search is raced in if the Worker is slow.
-    private const val SEARCH_HEDGE_MS = 2_500L
+    private const val SEARCH_HEDGE_MS = 3_500L
     private const val SEARCH_CACHE_TTL_MS = 5 * 60_000L
 
     /** Last raw diagnostic from a failed network call — surfaced by Home /
@@ -393,7 +393,12 @@ object AurumApi {
 
     /** Songs to play after [seed], best first. Never contains [seed] or any id
      *  in [exclude]. Empty only if every source failed. */
-    suspend fun related(seed: Song, exclude: Set<String> = emptySet(), limit: Int = 25): List<Song> {
+    suspend fun related(
+        seed: Song,
+        exclude: Set<String> = emptySet(),
+        limit: Int = 25,
+        excludeTitles: Set<String> = emptySet(),
+    ): List<Song> {
         val videoId = youtubeIdFor(seed)
         var pool: List<Song> = emptyList()
         if (videoId != null) {
@@ -403,14 +408,14 @@ object AurumApi {
                     if (it.isNotEmpty()) NetworkResilience.EdgeCache.put(key, it, RELATED_CACHE_TTL_MS)
                 }
         }
-        val ranked = rankRelated(seed, pool, exclude)
+        val ranked = rankRelated(seed, pool, exclude, excludeTitles = excludeTitles)
         if (ranked.size >= 6) return ranked.take(limit)
 
         // Radio unavailable/too thin: same-artist search keeps music going.
         val artist = seed.artist.takeUnless { it.isBlank() || it.equals("Unknown Artist", true) }
         val extra = runCatching { search(if (artist != null) "$artist songs" else seed.title, 20) }
             .getOrDefault(emptyList())
-        return rankRelated(seed, pool + extra, exclude).take(limit)
+        return rankRelated(seed, pool + extra, exclude, excludeTitles = excludeTitles).take(limit)
     }
 
     private const val MIX_PER_ARTIST = 8
@@ -419,7 +424,12 @@ object AurumApi {
      *  (Innertube automix, see [YtmRadio]) topped up with the NewPipe mix when
      *  Innertube is thin or unreachable. Up to [target] songs, never [seed]
      *  or anything in [exclude]; YouTube's order is kept. */
-    suspend fun upNextMix(seed: Song, exclude: Set<String>, target: Int = 70): List<Song> {
+    suspend fun upNextMix(
+        seed: Song,
+        exclude: Set<String>,
+        target: Int = 70,
+        excludeTitles: Set<String> = emptySet(),
+    ): List<Song> {
         val videoId = youtubeIdFor(seed)
         var pool: List<Song> = emptyList()
         if (videoId != null) {
@@ -429,11 +439,13 @@ object AurumApi {
                     if (it.isNotEmpty()) NetworkResilience.EdgeCache.put(key, it, RELATED_CACHE_TTL_MS)
                 }
         }
-        var ranked = rankRelated(seed, pool, exclude, MIX_PER_ARTIST)
+        var ranked = rankRelated(seed, pool, exclude, MIX_PER_ARTIST, excludeTitles)
         if (ranked.size < target) {
             val taken = HashSet<String>(exclude).apply { ranked.forEach { add(it.id) } }
-            val more = runCatching { related(seed, exclude = taken, limit = target - ranked.size + 10) }
-                .getOrDefault(emptyList())
+            val takenTitles = HashSet<String>(excludeTitles).apply { ranked.forEach { add(titleKey(it)) } }
+            val more = runCatching {
+                related(seed, exclude = taken, limit = target - ranked.size + 10, excludeTitles = takenTitles)
+            }.getOrDefault(emptyList())
             ranked = (ranked + more).distinctBy { it.id }
         }
         return ranked.take(target)
@@ -487,6 +499,11 @@ object AurumApi {
         return pick.url ?: ""
     }
 
+    /** Normalised title ("Tum Hi Ho (Official Video)" == "Tum Hi Ho") used to
+     *  keep the same song from appearing twice in a queue under different
+     *  video ids / channels. */
+    fun titleKey(song: Song): String = normTitle(song.title, song.id)
+
     private fun normTitle(title: String, fallback: String): String {
         val n = title.lowercase()
             .replace(BRACKETS, " ")
@@ -504,8 +521,9 @@ object AurumApi {
         pool: List<Song>,
         exclude: Set<String>,
         maxPerArtist: Int = MAX_PER_ARTIST,
+        excludeTitles: Set<String> = emptySet(),
     ): List<Song> {
-        val seenTitles = HashSet<String>()
+        val seenTitles = HashSet<String>(excludeTitles)
         seenTitles += normTitle(seed.title, seed.id)
         val perArtist = HashMap<String, Int>()
         val seedTitle = seed.title.lowercase()

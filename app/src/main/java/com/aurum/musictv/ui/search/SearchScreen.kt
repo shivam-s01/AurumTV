@@ -26,6 +26,11 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -76,14 +81,21 @@ fun SearchScreen(
     // keyboard input doesn't fire a network call per keystroke. Clearing
     // the box drops results immediately instead of waiting on a debounce
     // that's about to be cancelled anyway.
+    // Debounced live search: waits until typing pauses (remote typing bursts
+    // never fire a network call per key), ignores 1-letter queries, and the
+    // ViewModel drops repeats. Clearing the box drops results at once.
     LaunchedEffect(query) {
-        if (query.isEmpty()) {
+        val q = query.trim()
+        if (q.isEmpty()) {
             viewModel.clear()
             return@LaunchedEffect
         }
-        delay(250)
-        viewModel.search(query)
+        if (q.length < 2) return@LaunchedEffect
+        delay(320)
+        viewModel.search(q)
     }
+    // Read inside the click handler only, so typing never recomposes the grid.
+    val queryNow by rememberUpdatedState(query)
 
     Column(modifier = Modifier.fillMaxSize().padding(48.dp)) {
         Box(
@@ -104,6 +116,9 @@ fun SearchScreen(
                 onValueChange = { query = it },
                 textStyle = TextStyle(color = AurumColors.TextPrimary, fontSize = 20.sp),
                 cursorBrush = androidx.compose.ui.graphics.SolidColor(AurumColors.Gold),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { viewModel.search(query.trim()) }),
                 modifier = Modifier
                     .fillMaxWidth()
                     .onFocusChanged { isFieldFocused = it.isFocused }
@@ -126,22 +141,23 @@ fun SearchScreen(
                 }
                 ChipSection("Popular searches", POPULAR_SEARCHES) { query = it }
             }
-            if (state.isLoading) {
-                Text("Searching…", color = AurumColors.Gold, fontSize = 14.sp)
-            } else if (state.results.isEmpty() && query.isNotEmpty()) {
-                Text("No results", color = AurumColors.TextSecondary)
-                // FIX: previously any failure (dead Worker, timeout, DNS)
-                // rendered identically to a genuine "no matches" — same
-                // silent-swallow bug as Home. Now shows the actual reason
-                // underneath so it's obvious this is a connectivity/server
-                // problem, not just an obscure query.
-                state.loadError?.let { err ->
-                    Text(err, color = AurumColors.TextSecondary, fontSize = 12.sp)
+            // Fixed-height status line: the grid below never jumps when
+            // "Searching…" appears or disappears.
+            Box(modifier = Modifier.fillMaxWidth().height(24.dp)) {
+                if (state.isLoading) {
+                    Text("Searching…", color = AurumColors.Gold, fontSize = 14.sp)
+                } else if (state.results.isEmpty() && query.isNotEmpty()) {
+                    Text(
+                        state.loadError ?: "No results",
+                        color = AurumColors.TextSecondary,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                    )
                 }
             }
 
             LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 160.dp),
+                columns = GridCells.Fixed(6),
                 contentPadding = PaddingValues(vertical = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -150,7 +166,8 @@ fun SearchScreen(
                     SongCard(
                         song = song,
                         onClick = {
-                            scope.launch { SettingsStore.addRecentSearch(context, query) }
+                            val qNow = queryNow
+                            scope.launch { SettingsStore.addRecentSearch(context, qNow) }
                             onSongClick(song, state.results)
                         },
                         size = androidx.compose.ui.unit.Dp.Unspecified,

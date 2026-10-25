@@ -1,46 +1,15 @@
 package com.aurum.musictv.ui.player
 
-import androidx.compose.foundation.background
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.filled.QueueMusic
-import com.aurum.musictv.data.model.Song
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import kotlinx.coroutines.delay
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.material.icons.filled.Repeat
-import androidx.compose.material.icons.filled.RepeatOne
-import androidx.compose.material.icons.filled.Shuffle
-import androidx.compose.material.icons.filled.Timer
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.input.key.type
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.text.style.TextOverflow
-import com.aurum.musictv.player.RepeatMode
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -48,25 +17,56 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Border
@@ -75,23 +75,37 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
-import com.aurum.musictv.ui.util.adaptiveClickable
-import com.aurum.musictv.ui.util.isTouchDevice
-import com.aurum.musictv.ui.util.rememberClickFocusRequester
+import coil.request.ImageRequest
+import com.aurum.musictv.data.model.Song
+import com.aurum.musictv.data.remote.AurumApi
 import com.aurum.musictv.player.PlayerManager
+import com.aurum.musictv.player.RepeatMode
+import com.aurum.musictv.ui.components.ArtThumb
 import com.aurum.musictv.ui.theme.AurumColors
+import com.aurum.musictv.ui.util.LocalReduceMotion
+import com.aurum.musictv.ui.util.adaptiveClickable
+import com.aurum.musictv.ui.util.bigArt
+import com.aurum.musictv.ui.util.isTouchDevice
+import com.aurum.musictv.ui.util.rememberArtAccent
+import com.aurum.musictv.ui.util.rememberClickFocusRequester
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 /**
- * Progress bar and controls are built from plain foundation Box/Row for
- * layout, but every actionable control is a tv-material Surface (not a
- * bare Modifier.clickable) — that's what gives D-pad users a visible
- * focus ring per control. A plain clickable Box has no focus indicator on
- * TV, which made these buttons effectively invisible to remote
- * navigation (you could press the wrong one and not know it).
+ * Full player. Cover art drives the whole look: a dimmed, enlarged copy of
+ * the art as backdrop, a soft glow in the art's own accent colour, a big
+ * cover card, and the controls. Only the seek area listens to the 1-second
+ * position ticks, so the rest of the screen does not recompose every second
+ * (cheap on 1 GB boxes). Every control is a tv-material Surface so D-pad
+ * users always see a focus ring.
  */
 @Composable
 fun PlayerScreen(playerManager: PlayerManager, onBack: () -> Unit) {
-    val state by playerManager.uiState.collectAsState()
+    // Everything except the ticking position: identical states are skipped.
+    val state by remember(playerManager) {
+        playerManager.uiState.map { it.copy(positionMs = 0L) }.distinctUntilChanged()
+    }.collectAsState(initial = playerManager.uiState.value.copy(positionMs = 0L))
     val song = state.currentSong
     if (song == null) {
         // Nothing to show (e.g. app restarted): never leave a blank screen.
@@ -100,47 +114,86 @@ fun PlayerScreen(playerManager: PlayerManager, onBack: () -> Unit) {
     }
 
     var showQueue by remember { mutableStateOf(false) }
-    // Back closes the Queue panel first, then (next press) the player.
     BackHandler(enabled = showQueue) { showQueue = false }
 
-    // D-pad users land on Play/Pause right away (pause/resume = one click).
     val playFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         delay(150)
         runCatching { playFocus.requestFocus() }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        // Ambient background: the same art, dimmed (no blur: cheap on weak GPUs).
+    val art = remember(song.albumArtUrl) { bigArt(song.albumArtUrl) }
+    val accent = rememberArtAccent(art, AurumColors.Gold)
+    val context = LocalContext.current
+    // Low-end mode (Reduce motion, on by default for 1 GB boxes): no glow
+    // layer and no crossfades; the backdrop below is already featherweight.
+    val lite = LocalReduceMotion.current
+    val artRequest = remember(art, lite) {
+        ImageRequest.Builder(context).data(art).size(600).crossfade(!lite).build()
+    }
+    // Backdrop = the same cover decoded at 32x32 px (~2 KB of memory) and
+    // stretched over the whole screen: the smooth upscale IS the blur, so the
+    // ambient "blurred art" look costs a low-end GPU a single textured quad.
+    val bgRequest = remember(art) {
+        ImageRequest.Builder(context).data(art).size(32, 32).crossfade(false).build()
+    }
+    val glowRadius = with(LocalDensity.current) { 760.dp.toPx() }
+
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         AsyncImage(
-            model = com.aurum.musictv.ui.util.bigArt(song.albumArtUrl),
+            model = bgRequest,
             contentDescription = null,
-            modifier = Modifier.fillMaxSize().graphicsLayer { alpha = 0.22f },
+            modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop,
         )
+        if (!lite) {
+            // Accent glow behind the cover (skipped on low-end boxes).
+            Box(
+                modifier = Modifier.fillMaxSize().background(
+                    Brush.radialGradient(
+                        colors = listOf(accent.copy(alpha = 0.30f), Color.Transparent),
+                        radius = glowRadius,
+                    ),
+                ),
+            )
+        }
+        // Darkens the blurred art so text stays readable; deeper at the bottom.
         Box(
             modifier = Modifier.fillMaxSize().background(
-                Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), AurumColors.AmoledBg)),
+                Brush.verticalGradient(
+                    listOf(Color.Black.copy(alpha = 0.50f), Color.Black.copy(alpha = 0.90f)),
+                ),
             ),
         )
 
-        // Way out of the full player (Back on the remote does the same).
         BackPill(
             onClick = onBack,
             modifier = Modifier.align(Alignment.TopStart).padding(start = 32.dp, top = 24.dp),
         )
 
         Row(
-            modifier = Modifier.fillMaxSize().padding(48.dp),
-            horizontalArrangement = Arrangement.spacedBy(48.dp),
+            modifier = Modifier.fillMaxSize().padding(start = 64.dp, end = 64.dp, top = 56.dp, bottom = 32.dp),
+            horizontalArrangement = Arrangement.spacedBy(56.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            AsyncImage(
-                model = com.aurum.musictv.ui.util.bigArt(song.albumArtUrl),
-                contentDescription = song.title,
-                modifier = Modifier.size(360.dp).clip(RoundedCornerShape(16.dp)),
-                contentScale = ContentScale.Crop,
-            )
+            // Cover card with an accent halo.
+            Box(contentAlignment = Alignment.Center) {
+                Box(
+                    modifier = Modifier
+                        .size(404.dp)
+                        .clip(RoundedCornerShape(32.dp))
+                        .background(accent.copy(alpha = 0.22f)),
+                )
+                AsyncImage(
+                    model = artRequest,
+                    contentDescription = song.title,
+                    modifier = Modifier
+                        .size(372.dp)
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(AurumColors.AmoledBgSurface),
+                    contentScale = ContentScale.Crop,
+                )
+            }
 
             Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
@@ -148,53 +201,43 @@ fun PlayerScreen(playerManager: PlayerManager, onBack: () -> Unit) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.Top,
                 ) {
-                    Column(
-                        modifier = Modifier.widthIn(max = 480.dp)
-                    ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+                        Text(
+                            text = if (state.isResolving || state.isBuffering) "LOADING…" else "NOW PLAYING",
+                            color = accent,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 2.sp,
+                        )
                         Text(
                             text = song.title,
                             color = AurumColors.TextPrimary,
-                            fontSize = 32.sp,
+                            fontSize = 34.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 6.dp),
                         )
                         Text(
                             text = song.artist,
                             color = AurumColors.TextSecondary,
                             fontSize = 18.sp,
-                            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
                         )
                     }
-                    // Heart / save-to-Library toggle — this is what "save
-                    // to Library" from the Player screen means: writes to
-                    // the exact same liked_songs row LibraryScreen's
-                    // "Liked Songs" tab reads.
                     LikeButton(
                         liked = state.isCurrentSongLiked,
+                        accent = accent,
                         onClick = { playerManager.toggleLikeCurrentSong() },
                     )
                 }
 
-                val progress = if (state.durationMs > 0) {
-                    (state.positionMs.toFloat() / state.durationMs.toFloat()).coerceIn(0f, 1f)
-                } else 0f
-
-                SeekBar(
-                    progress = progress,
-                    onSeekFraction = { f -> playerManager.seekTo((f * state.durationMs).toLong()) },
-                    onSeekBy = { delta -> playerManager.seekBy(delta) },
-                )
+                SeekSection(playerManager = playerManager, accent = accent)
 
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(formatMs(state.positionMs), color = AurumColors.TextSecondary, fontSize = 13.sp)
-                    Text(formatMs(state.durationMs), color = AurumColors.TextSecondary, fontSize = 13.sp)
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -211,7 +254,7 @@ fun PlayerScreen(playerManager: PlayerManager, onBack: () -> Unit) {
                             contentDescription = "Play/Pause",
                             size = 40.dp,
                             tint = AurumColors.AmoledBg,
-                            background = AurumColors.Gold,
+                            background = accent,
                             focusRequester = playFocus,
                             onClick = { playerManager.togglePlayPause() },
                         )
@@ -225,7 +268,6 @@ fun PlayerScreen(playerManager: PlayerManager, onBack: () -> Unit) {
                     )
                 }
 
-                // Spotify-style mode row: shuffle / repeat / sleep timer.
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
                     horizontalArrangement = Arrangement.Center,
@@ -235,6 +277,7 @@ fun PlayerScreen(playerManager: PlayerManager, onBack: () -> Unit) {
                         icon = Icons.Filled.Shuffle,
                         label = "Shuffle",
                         active = state.shuffleOn,
+                        accent = accent,
                         onClick = { playerManager.toggleShuffle() },
                     )
                     Box(modifier = Modifier.padding(horizontal = 12.dp)) {
@@ -246,6 +289,7 @@ fun PlayerScreen(playerManager: PlayerManager, onBack: () -> Unit) {
                                 RepeatMode.ONE -> "Repeat one"
                             },
                             active = state.repeatMode != RepeatMode.OFF,
+                            accent = accent,
                             onClick = { playerManager.cycleRepeat() },
                         )
                     }
@@ -253,27 +297,39 @@ fun PlayerScreen(playerManager: PlayerManager, onBack: () -> Unit) {
                         icon = Icons.Filled.Timer,
                         label = if (state.sleepMinutes > 0) "Sleep ${state.sleepMinutes}m" else "Sleep",
                         active = state.sleepMinutes > 0,
+                        accent = accent,
                         onClick = { playerManager.cycleSleepTimer() },
                     )
                     Box(modifier = Modifier.padding(start = 12.dp)) {
                         ModeButton(
                             icon = Icons.Filled.QueueMusic,
-                            label = "Queue",
+                            label = "Up next",
                             active = showQueue,
+                            accent = accent,
                             onClick = { showQueue = !showQueue },
                         )
                     }
                 }
 
+                // One-line peek at what comes next (with its cover).
                 state.queue.getOrNull(state.currentIndex + 1)?.let { next ->
-                    Text(
-                        text = "Up next · ${next.title} — ${next.artist}",
-                        color = AurumColors.TextSecondary,
-                        fontSize = 13.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 18.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        ArtThumb(url = next.albumArtUrl, size = 40.dp, corner = 8.dp)
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("UP NEXT", color = accent, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.6.sp)
+                            Text(
+                                text = "${next.title} · ${next.artist}",
+                                color = AurumColors.TextSecondary,
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -282,10 +338,37 @@ fun PlayerScreen(playerManager: PlayerManager, onBack: () -> Unit) {
             QueuePanel(
                 queue = state.queue,
                 currentIndex = state.currentIndex,
+                isPlaying = state.isPlaying,
+                accent = accent,
                 onPlay = { playerManager.playAt(it) },
+                onTogglePlay = { playerManager.togglePlayPause() },
                 modifier = Modifier.align(Alignment.CenterEnd),
             )
         }
+    }
+}
+
+/** Seek bar + times: the only part that follows the 1-second position tick. */
+@Composable
+private fun SeekSection(playerManager: PlayerManager, accent: Color) {
+    val pos by remember(playerManager) {
+        playerManager.uiState.map { it.positionMs to it.durationMs }.distinctUntilChanged()
+    }.collectAsState(initial = playerManager.uiState.value.let { it.positionMs to it.durationMs })
+    val (positionMs, durationMs) = pos
+    val progress = if (durationMs > 0) (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f) else 0f
+
+    SeekBar(
+        progress = progress,
+        accent = accent,
+        onSeekFraction = { f -> playerManager.seekTo((f * durationMs).toLong()) },
+        onSeekBy = { delta -> playerManager.seekBy(delta) },
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(formatMs(positionMs), color = AurumColors.TextSecondary, fontSize = 13.sp)
+        Text(formatMs(durationMs), color = AurumColors.TextSecondary, fontSize = 13.sp)
     }
 }
 
@@ -297,14 +380,15 @@ fun PlayerScreen(playerManager: PlayerManager, onBack: () -> Unit) {
 @Composable
 private fun SeekBar(
     progress: Float,
+    accent: Color,
     onSeekFraction: (Float) -> Unit,
     onSeekBy: (Long) -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
     var widthPx by remember { mutableStateOf(0) }
     var dragFraction by remember { mutableStateOf<Float?>(null) }
-    // pointerInput(Unit) lives across recompositions: always call the newest lambda.
     val seekFraction by rememberUpdatedState(onSeekFraction)
+    val seekBy by rememberUpdatedState(onSeekBy)
     val shown = dragFraction ?: progress
 
     Box(
@@ -316,8 +400,8 @@ private fun SeekBar(
             .onKeyEvent { ev ->
                 if (ev.type == KeyEventType.KeyDown) {
                     when (ev.key) {
-                        Key.DirectionLeft -> { onSeekBy(-10_000L); true }
-                        Key.DirectionRight -> { onSeekBy(10_000L); true }
+                        Key.DirectionLeft -> { seekBy(-10_000L); true }
+                        Key.DirectionRight -> { seekBy(10_000L); true }
                         else -> false
                     }
                 } else false
@@ -345,61 +429,104 @@ private fun SeekBar(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(if (focused) 8.dp else 4.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(AurumColors.AmoledDivider),
+                .height(if (focused) 10.dp else 5.dp)
+                .clip(RoundedCornerShape(5.dp))
+                .background(Color.White.copy(alpha = 0.16f)),
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxHeight()
                     .fillMaxWidth(shown)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(if (focused) AurumColors.GoldLight else AurumColors.Gold),
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(accent),
             )
         }
     }
 }
 
-/** Right-hand "Up next" list (Spotify TV style). Text rows only - no images,
- *  so a long auto-extended queue costs next to nothing on a 1 GB box. */
+/**
+ * Right-hand queue. Pinned at the top: the song that is playing now. Below
+ * it: only what comes AFTER it, each row with its cover, title, artist and
+ * length. Songs whose title already appeared above are hidden, so the same
+ * song never shows twice. Thumbnails are decoded at row size.
+ */
 @Composable
 private fun QueuePanel(
     queue: List<Song>,
     currentIndex: Int,
+    isPlaying: Boolean,
+    accent: Color,
     onPlay: (Int) -> Unit,
+    onTogglePlay: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = currentIndex.coerceAtLeast(0))
-    val currentFocus = remember { FocusRequester() }
+    val current = queue.getOrNull(currentIndex)
+    val upcoming = remember(queue, currentIndex) {
+        val seen = HashSet<String>()
+        current?.let { seen += AurumApi.titleKey(it) }
+        val out = ArrayList<Pair<Int, Song>>()
+        for (i in (currentIndex + 1) until queue.size) {
+            val s = queue[i]
+            if (seen.add(AurumApi.titleKey(s))) out += i to s
+        }
+        out
+    }
+    val firstFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         delay(150)
-        runCatching { currentFocus.requestFocus() }
+        runCatching { firstFocus.requestFocus() }
     }
+
     Column(
         modifier = modifier
-            .width(440.dp)
+            .width(470.dp)
             .fillMaxHeight()
-            .background(AurumColors.AmoledBgCard.copy(alpha = 0.97f))
+            .background(Brush.horizontalGradient(listOf(Color.Black.copy(alpha = 0.90f), Color(0xFF070709))))
             .padding(top = 28.dp),
     ) {
         Text(
-            "Up next",
-            color = AurumColors.TextPrimary,
-            fontSize = 22.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+            "Now playing",
+            color = accent,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 1.8.sp,
+            modifier = Modifier.padding(start = 28.dp, bottom = 8.dp),
         )
+        if (current != null) {
+            NowPlayingRow(song = current, isPlaying = isPlaying, accent = accent, onClick = onTogglePlay)
+        }
+        Box(
+            modifier = Modifier
+                .padding(horizontal = 28.dp, vertical = 14.dp)
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(Color.White.copy(alpha = 0.10f)),
+        )
+        Text(
+            if (upcoming.isEmpty()) "Up next" else "Up next · ${upcoming.size}",
+            color = AurumColors.TextPrimary,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 28.dp, bottom = 6.dp),
+        )
+        if (upcoming.isEmpty()) {
+            Text(
+                "Finding songs for you…",
+                color = AurumColors.TextSecondary,
+                fontSize = 14.sp,
+                modifier = Modifier.padding(start = 28.dp, top = 8.dp),
+            )
+        }
         LazyColumn(
-            state = listState,
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            itemsIndexed(queue, key = { i, s -> "$i:${s.id}" }) { i, song ->
+            itemsIndexed(upcoming, key = { _, p -> "${p.first}:${p.second.id}" }) { n, p ->
                 QueueRow(
-                    song = song,
-                    current = i == currentIndex,
-                    requester = if (i == currentIndex) currentFocus else null,
-                    onClick = { onPlay(i) },
+                    song = p.second,
+                    requester = if (n == 0) firstFocus else null,
+                    accent = accent,
+                    onClick = { onPlay(p.first) },
                 )
             }
         }
@@ -407,20 +534,75 @@ private fun QueuePanel(
 }
 
 @Composable
-private fun QueueRow(song: Song, current: Boolean, requester: FocusRequester?, onClick: () -> Unit) {
+private fun NowPlayingRow(song: Song, isPlaying: Boolean, accent: Color, onClick: () -> Unit) {
     val touchRequester = rememberClickFocusRequester()
     val isTouch = isTouchDevice()
     Surface(
         onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(10.dp)),
+        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(14.dp)),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (current) AurumColors.GoldDark.copy(alpha = 0.22f) else Color.Transparent,
-            focusedContainerColor = AurumColors.AmoledBgElevated,
+            containerColor = accent.copy(alpha = 0.16f),
+            focusedContainerColor = accent.copy(alpha = 0.26f),
         ),
         border = ClickableSurfaceDefaults.border(
             focusedBorder = Border(
-                border = androidx.compose.foundation.BorderStroke(2.dp, AurumColors.Gold),
-                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(2.dp, accent),
+                shape = RoundedCornerShape(14.dp),
+            ),
+        ),
+        modifier = Modifier
+            .padding(horizontal = 16.dp)
+            .fillMaxWidth()
+            .adaptiveClickable(touchRequester, isTouch, onClick),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            ArtThumb(url = song.albumArtUrl, size = 64.dp, corner = 10.dp)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    song.title,
+                    color = accent,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    song.artist,
+                    color = AurumColors.TextSecondary,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(
+                imageVector = if (isPlaying) Icons.Filled.GraphicEq else Icons.Filled.Pause,
+                contentDescription = null,
+                tint = accent,
+                modifier = Modifier.size(24.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun QueueRow(song: Song, requester: FocusRequester?, accent: Color, onClick: () -> Unit) {
+    val touchRequester = rememberClickFocusRequester()
+    val isTouch = isTouchDevice()
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(12.dp)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.Transparent,
+            focusedContainerColor = Color.White.copy(alpha = 0.08f),
+        ),
+        border = ClickableSurfaceDefaults.border(
+            focusedBorder = Border(
+                border = BorderStroke(2.dp, accent),
+                shape = RoundedCornerShape(12.dp),
             ),
         ),
         modifier = Modifier
@@ -428,22 +610,32 @@ private fun QueueRow(song: Song, current: Boolean, requester: FocusRequester?, o
             .then(if (requester != null && !isTouch) Modifier.focusRequester(requester) else Modifier)
             .adaptiveClickable(touchRequester, isTouch, onClick),
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
-            Text(
-                text = song.title,
-                color = if (current) AurumColors.Gold else AurumColors.TextPrimary,
-                fontSize = 15.sp,
-                fontWeight = if (current) FontWeight.SemiBold else FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = song.artist,
-                color = AurumColors.TextSecondary,
-                fontSize = 12.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            ArtThumb(url = song.albumArtUrl, size = 52.dp, corner = 8.dp)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = song.title,
+                    color = AurumColors.TextPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = song.artist,
+                    color = AurumColors.TextSecondary,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (song.durationSec > 0) {
+                Text(formatMs(song.durationSec * 1000L), color = AurumColors.TextMuted, fontSize = 12.sp)
+            }
         }
     }
 }
@@ -484,14 +676,14 @@ private fun BackPill(onClick: () -> Unit, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ModeButton(icon: ImageVector, label: String, active: Boolean, onClick: () -> Unit) {
+private fun ModeButton(icon: ImageVector, label: String, active: Boolean, accent: Color, onClick: () -> Unit) {
     val focusRequester = rememberClickFocusRequester()
     val isTouch = isTouchDevice()
     Surface(
         onClick = onClick,
         shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(22.dp)),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (active) AurumColors.GoldDark.copy(alpha = 0.30f) else AurumColors.AmoledBgSurface,
+            containerColor = if (active) accent.copy(alpha = 0.28f) else Color.White.copy(alpha = 0.08f),
             focusedContainerColor = AurumColors.AmoledBgElevated,
         ),
         border = ClickableSurfaceDefaults.border(
@@ -510,12 +702,12 @@ private fun ModeButton(icon: ImageVector, label: String, active: Boolean, onClic
             Icon(
                 imageVector = icon,
                 contentDescription = label,
-                tint = if (active) AurumColors.Gold else AurumColors.TextSecondary,
+                tint = if (active) accent else AurumColors.TextSecondary,
                 modifier = Modifier.size(20.dp),
             )
             Text(
                 label,
-                color = if (active) AurumColors.Gold else AurumColors.TextSecondary,
+                color = if (active) accent else AurumColors.TextSecondary,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
             )
@@ -524,7 +716,7 @@ private fun ModeButton(icon: ImageVector, label: String, active: Boolean, onClic
 }
 
 @Composable
-private fun LikeButton(liked: Boolean, onClick: () -> Unit) {
+private fun LikeButton(liked: Boolean, accent: Color, onClick: () -> Unit) {
     val touchFocusRequester = rememberClickFocusRequester()
     val isTouch = isTouchDevice()
     Surface(
@@ -540,14 +732,14 @@ private fun LikeButton(liked: Boolean, onClick: () -> Unit) {
                 shape = CircleShape,
             ),
         ),
-        modifier = Modifier.size(52.dp).adaptiveClickable(touchFocusRequester, isTouch, onClick),
+        modifier = Modifier.size(56.dp).adaptiveClickable(touchFocusRequester, isTouch, onClick),
     ) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = if (liked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
                 contentDescription = if (liked) "Remove from Liked Songs" else "Save to Liked Songs",
-                tint = if (liked) AurumColors.Gold else AurumColors.TextSecondary,
-                modifier = Modifier.size(24.dp),
+                tint = if (liked) accent else AurumColors.TextSecondary,
+                modifier = Modifier.size(26.dp),
             )
         }
     }

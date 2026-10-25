@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
@@ -122,6 +124,11 @@ fun NowPlayingBar(
                     }
                 }
             }
+            BarButton(
+                if (state.isCurrentSongLiked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                if (state.isCurrentSongLiked) "Remove from Liked Songs" else "Save to Liked Songs",
+                tintOverride = if (state.isCurrentSongLiked) AurumColors.Gold else null,
+            ) { playerManager.toggleLikeCurrentSong() }
             BarButton(Icons.Filled.SkipPrevious, "Previous") { playerManager.playPrevious() }
             BarButton(
                 if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
@@ -138,6 +145,7 @@ private fun BarButton(
     icon: ImageVector,
     contentDescription: String,
     filled: Boolean = false,
+    tintOverride: androidx.compose.ui.graphics.Color? = null,
     onClick: () -> Unit,
 ) {
     val focusRequester = rememberClickFocusRequester()
@@ -161,7 +169,7 @@ private fun BarButton(
             Icon(
                 imageVector = icon,
                 contentDescription = contentDescription,
-                tint = if (filled) AurumColors.AmoledBg else AurumColors.TextPrimary,
+                tint = tintOverride ?: if (filled) AurumColors.AmoledBg else AurumColors.TextPrimary,
                 modifier = Modifier.size(22.dp),
             )
         }

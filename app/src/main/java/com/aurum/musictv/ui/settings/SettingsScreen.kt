@@ -2,6 +2,7 @@ package com.aurum.musictv.ui.settings
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -68,14 +69,22 @@ fun SettingsScreen(
         }
     }
 
+    LaunchedEffect(state.notice) {
+        if (state.notice != null) {
+            kotlinx.coroutines.delay(1800)
+            viewModel.dismissNotice()
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize().background(AurumColors.AmoledBg)) {
     LazyColumn(
-        modifier = Modifier.fillMaxSize().background(AurumColors.AmoledBg),
-        contentPadding = PaddingValues(horizontal = 48.dp, vertical = 32.dp),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 32.dp),
         verticalArrangement = Arrangement.spacedBy(28.dp),
     ) {
         item {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 48.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -213,6 +222,17 @@ fun SettingsScreen(
             }
         }
     }
+    state.notice?.let { msg ->
+        Box(
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 28.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(AurumColors.Gold)
+                .padding(horizontal = 24.dp, vertical = 12.dp),
+        ) {
+            Text(msg, color = AurumColors.AmoledBg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
+    }
 }
 
 @Composable
@@ -222,7 +242,7 @@ private fun SectionHeader(title: String) {
         color = AurumColors.Gold,
         fontSize = 13.sp,
         fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(bottom = 4.dp),
+        modifier = Modifier.padding(start = 48.dp, bottom = 4.dp),
     )
 }
 
@@ -231,7 +251,6 @@ private fun SettingsGroup(content: @Composable () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
             .background(AurumColors.AmoledBgCard),
     ) {
         content()
@@ -243,7 +262,7 @@ private fun RowContainer(content: @Composable () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 18.dp),
+            .padding(horizontal = 48.dp, vertical = 18.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) { content() }
@@ -265,6 +284,7 @@ private fun ActionRow(label: String, valueLabel: String, destructive: Boolean = 
         onClick = onClick,
         modifier = Modifier.fillMaxWidth().adaptiveClickable(touchFocusRequester, isTouch, onClick),
         shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(0.dp)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f, pressedScale = 1f),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = androidx.compose.ui.graphics.Color.Transparent,
             focusedContainerColor = AurumColors.AmoledBgElevated,
@@ -298,6 +318,7 @@ private fun ToggleRow(label: String, description: String, checked: Boolean, onTo
         onClick = { onToggle(!checked) },
         modifier = Modifier.fillMaxWidth().adaptiveClickable(touchFocusRequester, isTouch, { onToggle(!checked) }),
         shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(0.dp)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f, pressedScale = 1f),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = androidx.compose.ui.graphics.Color.Transparent,
             focusedContainerColor = AurumColors.AmoledBgElevated,
@@ -348,13 +369,13 @@ private fun <T> ChoiceRow(
     current: T,
     onSelect: (T) -> Unit,
 ) {
-    Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 18.dp)) {
+    Column(modifier = Modifier.padding(horizontal = 48.dp, vertical = 16.dp)) {
         Text(title, color = AurumColors.TextPrimary, fontSize = 16.sp)
         if (description != null) {
             Text(description, color = AurumColors.TextSecondary, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
         }
         Row(
-            modifier = Modifier.padding(top = 12.dp),
+            modifier = Modifier.padding(top = 10.dp, bottom = 2.dp, start = 2.dp, end = 2.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             options.forEach { (value, label) ->
@@ -376,6 +397,7 @@ private fun ChoiceChip(label: String, selected: Boolean, onClick: () -> Unit) {
         onClick = onClick,
         modifier = Modifier.adaptiveClickable(touchFocusRequester, isTouch, onClick),
         shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(20.dp)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f, pressedScale = 1f),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = if (selected) AurumColors.Gold else AurumColors.AmoledBgSurface,
             focusedContainerColor = if (selected) AurumColors.GoldLight else AurumColors.AmoledBgElevated,
@@ -405,6 +427,7 @@ private fun BackChip(onClick: () -> Unit) {
         onClick = onClick,
         modifier = Modifier.adaptiveClickable(touchFocusRequester, isTouch, onClick),
         shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(8.dp)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f, pressedScale = 1f),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = AurumColors.AmoledBgSurface,
             focusedContainerColor = AurumColors.AmoledBgElevated,

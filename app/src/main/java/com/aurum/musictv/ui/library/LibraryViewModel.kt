@@ -56,6 +56,7 @@ class LibraryViewModel : ViewModel() {
         }
     }
 
+    private var seenLikeVersion = SyncRepository.likeVersion.value
     private var loadedUserId: String? = null
     private var loadedAt = 0L
 
@@ -66,7 +67,10 @@ class LibraryViewModel : ViewModel() {
             AuthRepository.awaitReady()
             val signedIn = AuthRepository.isSignedIn
             val uid = SyncRepository.currentUserId()
-            val fresh = signedIn && uid == loadedUserId &&
+            // A like/unlike since the last load makes the cached lists stale.
+            val likesChanged = SyncRepository.likeVersion.value != seenLikeVersion
+            seenLikeVersion = SyncRepository.likeVersion.value
+            val fresh = signedIn && uid == loadedUserId && !likesChanged &&
                 System.currentTimeMillis() - loadedAt < 120_000L && !_uiState.value.isLoading
             if (fresh) return@launch
             if (!signedIn) {

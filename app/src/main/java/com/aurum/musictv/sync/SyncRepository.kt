@@ -17,6 +17,9 @@ import com.aurum.musictv.data.remote.SupabaseClientProvider
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.query.Columns
 import io.github.jan.supabase.postgrest.query.Order
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.time.Instant
 
 /**
@@ -58,6 +61,23 @@ object SyncRepository {
     /** Forget everything cached for the previous account (sign-in/out). */
     fun clearSessionCache() {
         likedIds = null
+        bumpLikes()
+    }
+
+    // Bumped on every successful like/unlike (and on sign-in/out) so Home and
+    // Library reload their liked lists instead of showing a stale copy.
+    private val _likeVersion = MutableStateFlow(0)
+    val likeVersion: StateFlow<Int> = _likeVersion.asStateFlow()
+    private fun bumpLikes() { _likeVersion.value = _likeVersion.value + 1 }
+
+    /** Short human reason of the last failed like/unlike (shown as a toast). */
+    @Volatile
+    var lastError: String = ""
+        private set
+
+    private fun shortError(e: Throwable): String {
+        val m = (e.message ?: e.javaClass.simpleName).lineSequence().firstOrNull().orEmpty().trim()
+        return if (m.length > 80) m.take(77) + "…" else m
     }
 
     fun currentUserId(): String? = userId
@@ -143,31 +163,71 @@ object SyncRepository {
         }.getOrDefault(false)
     }
 
-    /** @return true if the like was stored. */
+    /** @return true if the like was stored. Writes the phone's own row shape;
+     *  if the plain upsert is refused it falls back to delete + insert, and a
+     *  failure leaves a readable reason in [lastError] (never a silent no-op). */
     suspend fun likeSong(song: Song): Boolean {
-        val uid = awaitUserId() ?: return false
-        return runCatching {
-            SupabaseClientProvider.postgrest.from("favorites").upsert(
-                FavoriteUpsert(songId = song.id, userId = uid, data = song.toPhoneJson())
-            )
+        val uid = awaitUserId()
+        if (uid == null) {
+            lastError = "Not signed in"
+            return false
+        }
+        val row = FavoriteUpsert(songId = song.id, userId = uid, data = song.toPhoneJson())
+        val table = SupabaseClientProvider.postgrest.from("favorites")
+        var ok = false
+        try {
+            table.upsert(row)
+            ok = true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (first: Exception) {
+            try {
+                table.delete {
+                    filter {
+                        eq("user_id", uid)
+                        eq("song_id", song.id)
+                    }
+                }
+                table.insert(row)
+                ok = true
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (second: Exception) {
+                lastError = shortError(second)
+            }
+        }
+        if (ok) {
+            lastError = ""
             likedIds = (likedIds ?: emptySet()) + song.id
-            true
-        }.getOrDefault(false)
+            bumpLikes()
+        }
+        return ok
     }
 
     /** @return true if the like was removed. */
     suspend fun unlikeSong(songId: String): Boolean {
-        val uid = awaitUserId() ?: return false
-        return runCatching {
+        val uid = awaitUserId()
+        if (uid == null) {
+            lastError = "Not signed in"
+            return false
+        }
+        return try {
             SupabaseClientProvider.postgrest.from("favorites").delete {
                 filter {
                     eq("user_id", uid)
                     eq("song_id", songId)
                 }
             }
+            lastError = ""
             likedIds = (likedIds ?: emptySet()) - songId
+            bumpLikes()
             true
-        }.getOrDefault(false)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            lastError = shortError(e)
+            false
+        }
     }
 
     // ── History ("Recently Played" / "Continue Listening") ──────────────

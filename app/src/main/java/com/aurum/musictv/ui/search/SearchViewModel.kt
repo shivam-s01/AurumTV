@@ -40,7 +40,9 @@ class SearchViewModel : ViewModel() {
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, loadError = null)
-            val result = runCatching { AurumApi.search(query) }
+            val result = runCatching { AurumApi.search(query, limit = 24) }
+            // A superseded search must not write (empty) results over the newer one.
+            (result.exceptionOrNull() as? kotlinx.coroutines.CancellationException)?.let { throw it }
             val results = result.getOrDefault(emptyList())
             val loadError = when {
                 result.isFailure -> "Couldn't reach server: ${result.exceptionOrNull()?.message ?: "unknown error"}"

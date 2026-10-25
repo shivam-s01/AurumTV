@@ -260,9 +260,34 @@ class PlayerManager(private val context: Context) {
 
     // ── Queue / transport ───────────────────────────────────────────────
 
-    fun playQueue(songs: List<Song>, startIndex: Int) {
-        if (songs.isEmpty()) return
-        val index = startIndex.coerceIn(0, songs.lastIndex)
+    /** Same song twice (same id, or same title + artist under another video
+     *  id) shows up as two identical rows in Up Next. The tapped song always
+     *  survives and keeps its place; later copies are dropped. */
+    private fun dedupeSongs(songs: List<Song>, keepId: String): List<Song> {
+        val ids = HashSet<String>()
+        val keys = HashSet<String>()
+        val out = ArrayList<Song>(songs.size)
+        var keptTapped = false
+        for (s in songs) {
+            val key = AurumApi.titleKey(s) + "|" + s.artist.lowercase().substringBefore(',').substringBefore('&').trim()
+            if (s.id == keepId) {
+                if (keptTapped) continue
+                keptTapped = true
+                ids += s.id
+                keys += key
+                out += s
+            } else if (ids.add(s.id) && keys.add(key)) {
+                out += s
+            }
+        }
+        return out
+    }
+
+    fun playQueue(rawSongs: List<Song>, rawStartIndex: Int) {
+        if (rawSongs.isEmpty()) return
+        val tapped = rawSongs[rawStartIndex.coerceIn(0, rawSongs.lastIndex)]
+        val songs = dedupeSongs(rawSongs, tapped.id)
+        val index = songs.indexOfFirst { it.id == tapped.id }.coerceAtLeast(0)
 
         // Same song already loaded and healthy: keep it playing (resume if
         // paused) instead of re-resolving and restarting it from 0:00. A
@@ -547,11 +572,22 @@ class PlayerManager(private val context: Context) {
             return
         }
         val wasLiked = _uiState.value.isCurrentSongLiked
-        _uiState.update { it.copy(isCurrentSongLiked = !wasLiked) }
+        _uiState.update {
+            it.copy(
+                isCurrentSongLiked = !wasLiked,
+                playbackError = if (wasLiked) "Removed from Liked Songs" else "Added to Liked Songs",
+            )
+        }
         scope.launch {
             val ok = if (wasLiked) SyncRepository.unlikeSong(song.id) else SyncRepository.likeSong(song)
-            if (!ok && _uiState.value.currentSong?.id == song.id) {
-                _uiState.update { it.copy(isCurrentSongLiked = wasLiked) }
+            if (!ok) {
+                val reason = SyncRepository.lastError.ifBlank { "check your connection" }
+                _uiState.update {
+                    it.copy(
+                        isCurrentSongLiked = if (it.currentSong?.id == song.id) wasLiked else it.isCurrentSongLiked,
+                        playbackError = "Couldn't update like — $reason",
+                    )
+                }
             }
         }
     }
@@ -575,9 +611,21 @@ class PlayerManager(private val context: Context) {
 
     /** Songs YouTube's radio suggests after [song], minus what is queued. */
     private suspend fun fetchFresh(song: Song, target: Int = UPNEXT_TARGET): List<Song> {
-        val have = _uiState.value.queue.mapTo(HashSet()) { it.id }
-        return runCatching { AurumApi.upNextMix(song, exclude = have, target = target) }
-            .getOrDefault(emptyList())
+        val queue = _uiState.value.queue
+        val have = queue.mapTo(HashSet()) { it.id }
+        val haveTitles = queue.mapTo(HashSet()) { AurumApi.titleKey(it) }
+        return runCatching {
+            AurumApi.upNextMix(song, exclude = have, target = target, excludeTitles = haveTitles)
+        }.getOrDefault(emptyList())
+    }
+
+    /** Appends [fresh] to the queue, skipping anything already in it by id OR
+     *  by title (the same song uploaded by another channel). */
+    private fun appendUnique(queue: List<Song>, fresh: List<Song>): List<Song> {
+        val ids = queue.mapTo(HashSet()) { it.id }
+        val titles = queue.mapTo(HashSet()) { AurumApi.titleKey(it) }
+        val add = fresh.filter { ids.add(it.id) && titles.add(AurumApi.titleKey(it)) }
+        return if (add.isEmpty()) queue else queue + add
     }
 
     /** Keeps "Up next" stocked (Autoplay on): whenever fewer than
@@ -602,10 +650,7 @@ class PlayerManager(private val context: Context) {
             if (fresh.isEmpty()) return@launch
             _uiState.update { st ->
                 if (st.currentSong?.id != song.id) st
-                else {
-                    val have = st.queue.mapTo(HashSet()) { it.id }
-                    st.copy(queue = st.queue + fresh.filter { it.id !in have })
-                }
+                else st.copy(queue = appendUnique(st.queue, fresh))
             }
             prefetchNext(_uiState.value.currentIndex)
         }
@@ -623,8 +668,9 @@ class PlayerManager(private val context: Context) {
             val fresh = fetchFresh(song)
             // The user may have moved on to another song while this loaded.
             if (fresh.isEmpty() || _uiState.value.currentSong?.id != song.id) return@launch
-            _uiState.update { it.copy(queue = it.queue + fresh) }
-            playIndex(_uiState.value.currentIndex + 1)
+            val before = _uiState.value.queue.size
+            _uiState.update { it.copy(queue = appendUnique(it.queue, fresh)) }
+            if (_uiState.value.queue.size > before) playIndex(_uiState.value.currentIndex + 1)
         }
     }
 

@@ -13,6 +13,7 @@ import com.aurum.musictv.sync.AuthRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class SettingsUiState(
@@ -24,6 +25,8 @@ data class SettingsUiState(
     val isSignedIn: Boolean = false,
     val accountLabel: String? = null,
     val cacheCleared: Boolean = false,
+    /** One-line confirmation shown after any change ("Equalizer: Bass"). */
+    val notice: String? = null,
 )
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
@@ -39,7 +42,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
         viewModelScope.launch {
             SettingsStore.observe(getApplication()).collect { settings ->
-                _uiState.value = _uiState.value.copy(settings = settings)
+                _uiState.update { it.copy(settings = settings) }
             }
         }
     }
@@ -56,37 +59,56 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         )
     }
 
-    fun setAudioQuality(quality: AudioQuality) = viewModelScope.launch {
-        SettingsStore.setAudioQuality(getApplication(), quality)
+    /** Applies a change to the screen at once (so a click is never silent),
+     *  then saves it; the DataStore flow confirms the same value afterwards. */
+    private fun change(notice: String, edit: (AppSettings) -> AppSettings, save: suspend () -> Unit) {
+        _uiState.update { it.copy(settings = edit(it.settings), notice = notice) }
+        viewModelScope.launch { runCatching { save() } }
     }
 
-    fun setAutoplay(enabled: Boolean) = viewModelScope.launch {
-        SettingsStore.setAutoplay(getApplication(), enabled)
+    fun dismissNotice() {
+        _uiState.update { it.copy(notice = null) }
     }
 
-    fun setOpenPlayerOnTap(enabled: Boolean) = viewModelScope.launch {
-        SettingsStore.setOpenPlayerOnTap(getApplication(), enabled)
-    }
+    fun setAudioQuality(quality: AudioQuality) = change(
+        "Audio quality: ${quality.name.lowercase().replaceFirstChar { it.uppercase() }}",
+        { it.copy(audioQuality = quality) },
+    ) { SettingsStore.setAudioQuality(getApplication(), quality) }
 
-    fun setSkipSilence(enabled: Boolean) = viewModelScope.launch {
-        SettingsStore.setSkipSilence(getApplication(), enabled)
-    }
+    fun setAutoplay(enabled: Boolean) = change(
+        "Autoplay ${if (enabled) "on" else "off"}",
+        { it.copy(autoplay = enabled) },
+    ) { SettingsStore.setAutoplay(getApplication(), enabled) }
 
-    fun setEqPreset(preset: EqPreset) = viewModelScope.launch {
-        SettingsStore.setEqPreset(getApplication(), preset)
-    }
+    fun setOpenPlayerOnTap(enabled: Boolean) = change(
+        "Full player on tap ${if (enabled) "on" else "off"}",
+        { it.copy(openPlayerOnTap = enabled) },
+    ) { SettingsStore.setOpenPlayerOnTap(getApplication(), enabled) }
 
-    fun setBassBoost(level: FxLevel) = viewModelScope.launch {
-        SettingsStore.setBassBoost(getApplication(), level)
-    }
+    fun setSkipSilence(enabled: Boolean) = change(
+        "Skip silence ${if (enabled) "on" else "off"}",
+        { it.copy(skipSilence = enabled) },
+    ) { SettingsStore.setSkipSilence(getApplication(), enabled) }
 
-    fun setVolumeBoost(level: FxLevel) = viewModelScope.launch {
-        SettingsStore.setVolumeBoost(getApplication(), level)
-    }
+    fun setEqPreset(preset: EqPreset) = change(
+        "Equalizer: ${preset.name.lowercase().replaceFirstChar { it.uppercase() }}",
+        { it.copy(eqPreset = preset) },
+    ) { SettingsStore.setEqPreset(getApplication(), preset) }
 
-    fun setReduceMotion(enabled: Boolean) = viewModelScope.launch {
-        SettingsStore.setReduceMotion(getApplication(), enabled)
-    }
+    fun setBassBoost(level: FxLevel) = change(
+        "Bass boost: ${level.name.lowercase().replaceFirstChar { it.uppercase() }}",
+        { it.copy(bassBoost = level) },
+    ) { SettingsStore.setBassBoost(getApplication(), level) }
+
+    fun setVolumeBoost(level: FxLevel) = change(
+        "Volume boost: ${level.name.lowercase().replaceFirstChar { it.uppercase() }}",
+        { it.copy(volumeBoost = level) },
+    ) { SettingsStore.setVolumeBoost(getApplication(), level) }
+
+    fun setReduceMotion(enabled: Boolean) = change(
+        "Reduce motion ${if (enabled) "on" else "off"}",
+        { it.copy(reduceMotion = enabled) },
+    ) { SettingsStore.setReduceMotion(getApplication(), enabled) }
 
     fun clearCache() = viewModelScope.launch {
         DeviceInfo.clearCache(getApplication())

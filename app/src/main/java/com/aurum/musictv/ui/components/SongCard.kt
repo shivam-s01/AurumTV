@@ -36,7 +36,9 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import androidx.compose.ui.platform.LocalContext
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.aurum.musictv.data.model.Song
 import com.aurum.musictv.ui.theme.AurumColors
 import com.aurum.musictv.ui.util.LocalReduceMotion
@@ -68,6 +70,12 @@ fun SongCard(
     // size = Dp.Unspecified -> "fluid": the card fills its grid cell exactly
     // (square), so Library/Search grids have no uneven gap on the right.
     val fluid = !size.isSpecified
+    val context = LocalContext.current
+    // Thumbnails are 300 px at most: decode exactly that, no fade (cheaper
+    // while a whole grid of results appears at once).
+    val artRequest = remember(song.albumArtUrl) {
+        ImageRequest.Builder(context).data(song.albumArtUrl).size(300).crossfade(false).build()
+    }
 
     Column(
         modifier = if (fluid) modifier.fillMaxWidth() else modifier.width(size),
@@ -94,7 +102,7 @@ fun SongCard(
         ) {
             Box {
                 AsyncImage(
-                    model = song.albumArtUrl,
+                    model = artRequest,
                     contentDescription = song.title,
                     modifier = (if (fluid) Modifier.fillMaxSize() else Modifier.size(size)).clip(RoundedCornerShape(10.dp)),
                     contentScale = ContentScale.Crop,

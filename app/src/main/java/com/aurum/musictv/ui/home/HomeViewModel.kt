@@ -49,6 +49,16 @@ class HomeViewModel : ViewModel() {
         loadHome()
         loadUserData()
         autoRefreshPeriodically()
+        // Liked Songs row follows likes made on the player / mini player.
+        viewModelScope.launch {
+            var first = true
+            SyncRepository.likeVersion.collect {
+                if (first) { first = false; return@collect }
+                delay(600)
+                val liked = runCatching { SyncRepository.fetchLikedSongs(limit = 40) }.getOrNull()
+                if (liked != null) _uiState.update { it.copy(likedSongs = liked) }
+            }
+        }
     }
 
     /** Retry only: if Home is still empty (server was down at launch) it
