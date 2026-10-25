@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Pause
@@ -53,7 +56,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -85,6 +89,7 @@ import com.aurum.musictv.ui.theme.AurumColors
 import com.aurum.musictv.ui.util.LocalReduceMotion
 import com.aurum.musictv.ui.util.adaptiveClickable
 import com.aurum.musictv.ui.util.bigArt
+import com.aurum.musictv.ui.util.heroArt
 import com.aurum.musictv.ui.util.isTouchDevice
 import com.aurum.musictv.ui.util.rememberArtAccent
 import com.aurum.musictv.ui.util.rememberClickFocusRequester
@@ -122,46 +127,53 @@ fun PlayerScreen(playerManager: PlayerManager, onBack: () -> Unit) {
         runCatching { playFocus.requestFocus() }
     }
 
-    val art = remember(song.albumArtUrl) { bigArt(song.albumArtUrl) }
+    // Low-end mode (Reduce motion, on by default for 1 GB boxes): 600 px art,
+    // no crossfade. Everything else about the layout is identical.
+    val lite = LocalReduceMotion.current
+    val art = remember(song.albumArtUrl, lite) {
+        if (lite) bigArt(song.albumArtUrl) else heroArt(song.albumArtUrl)
+    }
     val accent = rememberArtAccent(art, AurumColors.Gold)
     val context = LocalContext.current
-    // Low-end mode (Reduce motion, on by default for 1 GB boxes): no glow
-    // layer and no crossfades; the backdrop below is already featherweight.
-    val lite = LocalReduceMotion.current
     val artRequest = remember(art, lite) {
-        ImageRequest.Builder(context).data(art).size(600).crossfade(!lite).build()
+        ImageRequest.Builder(context)
+            .data(art)
+            .size(if (lite) 600 else 1000)
+            .crossfade(!lite)
+            .build()
     }
-    // Backdrop = the same cover decoded at 32x32 px (~2 KB of memory) and
-    // stretched over the whole screen: the smooth upscale IS the blur, so the
-    // ambient "blurred art" look costs a low-end GPU a single textured quad.
-    val bgRequest = remember(art) {
-        ImageRequest.Builder(context).data(art).size(32, 32).crossfade(false).build()
-    }
-    val glowRadius = with(LocalDensity.current) { 760.dp.toPx() }
+    // Dark page colour with a breath of the cover's accent in it.
+    val bg = lerp(Color(0xFF08080A), accent, 0.12f)
 
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    var immersive by remember { mutableStateOf(false) }
+    BackHandler(enabled = immersive) { immersive = false }
+
+    Box(modifier = Modifier.fillMaxSize().background(bg)) {
+      if (immersive) {
+        ImmersiveArt(
+            song = song,
+            request = artRequest,
+            accent = accent,
+            bg = bg,
+            playerManager = playerManager,
+            onExit = { immersive = false },
+        )
+      } else {
+        // The cover itself, sharp and full height on the left, fading into
+        // the page colour where the controls begin.
         AsyncImage(
-            model = bgRequest,
-            contentDescription = null,
-            modifier = Modifier.fillMaxSize(),
+            model = artRequest,
+            contentDescription = song.title,
+            modifier = Modifier.align(Alignment.CenterStart).fillMaxHeight().aspectRatio(1f),
             contentScale = ContentScale.Crop,
         )
-        if (!lite) {
-            // Accent glow behind the cover (skipped on low-end boxes).
-            Box(
-                modifier = Modifier.fillMaxSize().background(
-                    Brush.radialGradient(
-                        colors = listOf(accent.copy(alpha = 0.30f), Color.Transparent),
-                        radius = glowRadius,
-                    ),
-                ),
-            )
-        }
-        // Darkens the blurred art so text stays readable; deeper at the bottom.
         Box(
             modifier = Modifier.fillMaxSize().background(
-                Brush.verticalGradient(
-                    listOf(Color.Black.copy(alpha = 0.50f), Color.Black.copy(alpha = 0.90f)),
+                Brush.horizontalGradient(
+                    0f to Color.Transparent,
+                    0.30f to Color.Transparent,
+                    0.56f to bg,
+                    1f to bg,
                 ),
             ),
         )
@@ -172,30 +184,14 @@ fun PlayerScreen(playerManager: PlayerManager, onBack: () -> Unit) {
         )
 
         Row(
-            modifier = Modifier.fillMaxSize().padding(start = 64.dp, end = 64.dp, top = 56.dp, bottom = 32.dp),
-            horizontalArrangement = Arrangement.spacedBy(56.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxSize().padding(end = 64.dp, top = 40.dp, bottom = 32.dp),
         ) {
-            // Cover card with an accent halo.
-            Box(contentAlignment = Alignment.Center) {
-                Box(
-                    modifier = Modifier
-                        .size(404.dp)
-                        .clip(RoundedCornerShape(32.dp))
-                        .background(accent.copy(alpha = 0.22f)),
-                )
-                AsyncImage(
-                    model = artRequest,
-                    contentDescription = song.title,
-                    modifier = Modifier
-                        .size(372.dp)
-                        .clip(RoundedCornerShape(22.dp))
-                        .background(AurumColors.AmoledBgSurface),
-                    contentScale = ContentScale.Crop,
-                )
-            }
+            Spacer(modifier = Modifier.weight(0.54f))
 
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.weight(0.46f).fillMaxHeight(),
+                verticalArrangement = Arrangement.Center,
+            ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -302,6 +298,15 @@ fun PlayerScreen(playerManager: PlayerManager, onBack: () -> Unit) {
                     )
                     Box(modifier = Modifier.padding(start = 12.dp)) {
                         ModeButton(
+                            icon = Icons.Filled.Fullscreen,
+                            label = "Full art",
+                            active = false,
+                            accent = accent,
+                            onClick = { immersive = true },
+                        )
+                    }
+                    Box(modifier = Modifier.padding(start = 12.dp)) {
+                        ModeButton(
                             icon = Icons.Filled.QueueMusic,
                             label = "Up next",
                             active = showQueue,
@@ -345,6 +350,103 @@ fun PlayerScreen(playerManager: PlayerManager, onBack: () -> Unit) {
                 modifier = Modifier.align(Alignment.CenterEnd),
             )
         }
+      }
+    }
+}
+
+/**
+ * "Hotel TV" mode: the cover takes the whole screen, every control is gone.
+ * Only a slim title strip and a hairline progress bar remain. OK / tap /
+ * Back returns to the player. One bitmap + one gradient: cheap on low-end.
+ */
+@Composable
+private fun ImmersiveArt(
+    song: Song,
+    request: ImageRequest,
+    accent: Color,
+    bg: Color,
+    playerManager: PlayerManager,
+    onExit: () -> Unit,
+) {
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        delay(100)
+        runCatching { focus.requestFocus() }
+    }
+    val exit by rememberUpdatedState(onExit)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.horizontalGradient(
+                    listOf(accent.copy(alpha = 0.32f).compositeOver(bg), bg, accent.copy(alpha = 0.32f).compositeOver(bg)),
+                ),
+            )
+            .focusRequester(focus)
+            .onKeyEvent { ev ->
+                if (ev.type == KeyEventType.KeyDown) {
+                    when (ev.key) {
+                        Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> { exit(); true }
+                        Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight -> true
+                        else -> false
+                    }
+                } else false
+            }
+            .focusable()
+            .pointerInput(Unit) { detectTapGestures { exit() } },
+    ) {
+        AsyncImage(
+            model = request,
+            contentDescription = song.title,
+            modifier = Modifier.align(Alignment.Center).fillMaxHeight().aspectRatio(1f),
+            contentScale = ContentScale.Crop,
+        )
+        // Slim title strip over a soft bottom scrim.
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(190.dp)
+                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.82f)))),
+        )
+        Column(
+            modifier = Modifier.align(Alignment.BottomStart).padding(start = 56.dp, bottom = 30.dp, end = 56.dp),
+        ) {
+            Text(
+                song.title,
+                color = AurumColors.TextPrimary,
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                song.artist,
+                color = AurumColors.TextSecondary,
+                fontSize = 15.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        HairlineProgress(
+            playerManager = playerManager,
+            accent = accent,
+            modifier = Modifier.align(Alignment.BottomStart),
+        )
+    }
+}
+
+/** 3 dp progress line along the bottom edge; follows the position tick itself. */
+@Composable
+private fun HairlineProgress(playerManager: PlayerManager, accent: Color, modifier: Modifier = Modifier) {
+    val pos by remember(playerManager) {
+        playerManager.uiState.map { it.positionMs to it.durationMs }.distinctUntilChanged()
+    }.collectAsState(initial = playerManager.uiState.value.let { it.positionMs to it.durationMs })
+    val (p, d) = pos
+    val f = if (d > 0) (p.toFloat() / d.toFloat()).coerceIn(0f, 1f) else 0f
+    Box(modifier = modifier.fillMaxWidth().height(3.dp).background(Color.White.copy(alpha = 0.12f))) {
+        Box(modifier = Modifier.fillMaxHeight().fillMaxWidth(f).background(accent))
     }
 }
 
